@@ -1,0 +1,117 @@
+/* ==========================================================================
+   Printing / PDF export. A dedicated #print-root holds paginated sheets; in print
+   media it is the only thing rendered, so no UI chrome can leak into the PDF.
+   ========================================================================== */
+.sheet {
+  position: relative;
+  background: #fff;
+  color: #1d1d1f;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  --text-ink: #1d1d1f;
+  --text-ink-2: #55555c;
+}
+.sheet-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 650;
+  color: #1d1d1f;
+  border-bottom: 0.5pt solid #d0d0d6;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.sheet-header .cont {
+  font-weight: 400;
+  color: #888;
+  font-size: 12px;
+}
+.sheet-content {
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sheet-footer {
+  margin-top: auto;
+  text-align: center;
+  font-size: 10px;
+  color: #888;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sheet.with-bg.paper-warm {
+  background-color: var(--paper-warm);
+}
+.sheet.with-bg.paper-cool {
+  background-color: var(--paper-cool);
+}
+.sheet.with-bg.paper-dark {
+  background-color: var(--paper-dark);
+  --text-ink: #ececf1;
+  --text-ink-2: #b4b5be;
+  color: #ececf1;
+}
+.sheet.with-bg.pattern-dots {
+  background-image: radial-gradient(circle, rgba(70, 85, 120, 0.22) 1px, transparent 1.3px);
+  background-size: 24px 24px;
+}
+.sheet.with-bg.pattern-grid {
+  background-image: linear-gradient(rgba(70, 110, 180, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(70, 110, 180, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.sheet.with-bg.pattern-lines {
+  background-image: linear-gradient(transparent calc(100% - 1px), rgba(70, 110, 180, 0.14) 1px);
+  background-size: 100% 32px;
+}
+.print-world .text-item {
+  color: var(--text-ink);
+}
+
+@media screen {
+  #print-root {
+    position: fixed;
+    left: -100000px;
+    top: 0;
+    pointer-events: none;
+  }
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  #root {
+    display: none !important;
+  }
+  #print-root {
+    display: block !important;
+    position: static !important;
+  }
+  .sheet {
+    break-after: page;
+    page-break-after: always;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .image-item img,
+  .text-item.sticky {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .text-item.sticky {
+    box-shadow: none;
+  }
+}

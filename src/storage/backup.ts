@@ -127,7 +127,7 @@ export function remapBackup(b: BackupFile): BackupFile {
         c.id = m(it.id);
         if (c.parentId) c.parentId = m(c.parentId);
         if (c.type === 'image') c.assetId = m(c.assetId);
-        if (c.type === 'container' && c.doc) remapDocAssets(c.doc as Record<string, unknown>, m);
+        if ((c.type === 'container' || c.type === 'text') && c.doc) remapDocAssets(c.doc as Record<string, unknown>, m);
         if (c.type === 'connector') {
           c.fromId = m(c.fromId);
           c.toId = m(c.toId);
@@ -143,10 +143,10 @@ export function remapBackup(b: BackupFile): BackupFile {
 function remapDocAssets(node: Record<string, unknown>, m: (id: string) => string): void {
   if (node.type === 'imageBlock' && node.attrs && typeof node.attrs === 'object') {
     const attrs = node.attrs as Record<string, unknown>;
-    if (typeof attrs.assetId === 'string') attrs.assetId = m(attrs.assetId);
+    if (typeof attrs.assetId === 'string' && attrs.assetId) attrs.assetId = m(attrs.assetId);
     if (attrs.source && typeof attrs.source === 'object') {
       const src = attrs.source as Record<string, unknown>;
-      if (typeof src.assetId === 'string') src.assetId = m(src.assetId);
+      if (typeof src.assetId === 'string' && src.assetId) src.assetId = m(src.assetId);
     }
   }
   if (Array.isArray(node.content)) {

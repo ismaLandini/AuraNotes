@@ -2,8 +2,9 @@ import { memo, useLayoutEffect, useMemo, useRef } from 'react';
 import { generateHTML, type JSONContent } from '@tiptap/core';
 import { lowlight, renderLatex, sharedExtensions } from './extensions';
 import { getAssetUrl } from '../storage/assets';
+import { computeBucketWidth, getPdfPageUrl } from '../pdf/pageCache';
 import { arrowHeadPath, smoothPath } from '../lib/geometry';
-import type { ShapeItem, StrokeItem } from '../types';
+import type { PdfSourceAttr, ShapeItem, StrokeItem } from '../types';
 
 const htmlCache = new WeakMap<JSONContent, string>();
 
@@ -242,8 +243,35 @@ export async function enhanceStaticHTML(root: HTMLElement): Promise<void> {
         el.style.transform = `rotate(${rotation}deg)`;
       }
 
-      if (assetId && !el.querySelector('img')) {
-        const url = await getAssetUrl(assetId);
+      if (!el.querySelector('img')) {
+        let url: string | null = null;
+        if (assetId) {
+          url = await getAssetUrl(assetId);
+        } else {
+          const rawSource = el.getAttribute('data-source');
+          if (rawSource) {
+            try {
+              const parsedSource = JSON.parse(rawSource) as PdfSourceAttr;
+              if (
+                parsedSource &&
+                parsedSource.type === 'pdf' &&
+                typeof parsedSource.assetId === 'string' &&
+                parsedSource.assetId &&
+                typeof parsedSource.page === 'number' &&
+                parsedSource.page >= 1
+              ) {
+                const targetWidth = inPrint
+                  ? Math.max(1200, Math.round(((naturalWidth || 595.28) * 300) / 72))
+                  : computeBucketWidth(dispW);
+                url = await getPdfPageUrl(parsedSource.assetId, parsedSource.page, targetWidth, undefined, {
+                  priority: inPrint ? 10 : 1,
+                });
+              }
+            } catch {
+              /* ignore invalid source */
+            }
+          }
+        }
         if (url && !el.querySelector('img')) {
           const img = document.createElement('img');
           img.src = url;

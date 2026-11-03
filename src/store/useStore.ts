@@ -5,8 +5,9 @@ import * as P from '../model/pageOps';
 import { buildExampleWorkspace } from '../model/example';
 import { type AcademicTemplateId, createTemplatePage, getTemplate } from '../model/templates';
 import { constrainChanged } from '../lib/page';
-import { deleteAssets, deletePages, listAssetIds, loadAllPages, loadPage, loadWorkspace } from '../storage/db';
-import { revokeAssetUrl } from '../storage/assets';
+import { deletePages, loadPage, loadWorkspace } from '../storage/db';
+import { garbageCollectAssets } from '../storage/assets';
+
 import { useUI } from './ui';
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error';
@@ -375,26 +376,16 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   garbageCollectAssets: async (excludeFuture = false) => {
-    const all = await loadAllPages();
-    const referenced = new Set<ID>();
+    const memReferenced = new Set<ID>();
     const memPages = get().pages;
-    const ids = new Set([...all.map((p) => p.id), ...Object.keys(memPages)]);
-    for (const id of ids) {
-      const p = memPages[id] ?? all.find((x) => x.id === id);
-      if (p) for (const a of P.referencedAssets(p)) referenced.add(a);
+    for (const p of Object.values(memPages)) {
+      for (const a of P.referencedAssets(p)) memReferenced.add(a);
     }
-    // Pages in history (undo) may reference assets too.
     for (const h of Object.values(get().history)) {
       const histPages = excludeFuture ? h.past : [...h.past, ...h.future];
-      for (const p of histPages) for (const a of P.referencedAssets(p)) referenced.add(a);
+      for (const p of histPages) for (const a of P.referencedAssets(p)) memReferenced.add(a);
     }
-    const stored = await listAssetIds();
-    const orphan = stored.filter((a) => !referenced.has(a));
-    if (orphan.length) {
-      for (const id of orphan) revokeAssetUrl(id);
-      await deleteAssets(orphan);
-    }
-    return orphan.length;
+    return garbageCollectAssets(excludeFuture, memReferenced);
   },
 
   currentPage: () => {

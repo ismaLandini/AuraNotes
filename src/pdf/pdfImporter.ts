@@ -7,8 +7,8 @@ import type {
   PdfQualityPreset,
 } from './types';
 import { estimatePdfImportBytes } from './scale';
-import { destroyPdfDocument, openPdfDocument, renderPdfPageToBlob } from './renderer';
-import { importAssetBlob, importImageBlob } from '../storage/assets';
+import { destroyPdfDocument, openPdfDocument } from './renderer';
+import { importAssetBlob } from '../storage/assets';
 import { requestPersistence, storageEstimate } from '../storage/db';
 import { useStore } from '../store/useStore';
 import * as P from '../model/pageOps';
@@ -47,8 +47,8 @@ export function formatBytes(n: number): string {
 export async function checkPdfStorageQuota(
   pageCount: number,
   fileSize: number,
-  quality: PdfQualityPreset,
-  format: PdfLosslessFormat,
+  quality?: PdfQualityPreset,
+  format?: PdfLosslessFormat,
 ): Promise<StorageQuotaCheck> {
   const persisted = await requestPersistence().catch(() => false);
   const est = await storageEstimate().catch(() => null);
@@ -133,7 +133,6 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
   const rawFileName =
     options.fileName || (typeof File !== 'undefined' && options.file instanceof File ? options.file.name : 'Documento.pdf');
   const baseName = stripPdfExtension(rawFileName);
-  const format: PdfLosslessFormat = options.format ?? 'png';
 
   const pdfBytes = await readBlobBytes(options.file);
   const doc = await openPdfDocument(pdfBytes, options.password);
@@ -150,7 +149,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
     }
 
     if (!options.skipQuotaCheck) {
-      const quota = await checkPdfStorageQuota(requestedPages.length, options.file.size, options.quality, format);
+      const quota = await checkPdfStorageQuota(requestedPages.length, options.file.size);
       if (!quota.ok) {
         throw new PdfStorageQuotaError(
           quota.warningMessage ?? 'Spazio di archiviazione insufficiente per importare il PDF.',
@@ -207,35 +206,28 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
         peakMemoryBytes,
       });
 
-      const rendered = await renderPdfPageToBlob(
-        doc,
-        pageNumber,
-        options.quality,
-        format,
-        options.canvasLimits,
-      );
+      const pageProxy = await doc.getPage(pageNumber);
+      let widthPoints = 595.28;
+      let heightPoints = 841.89;
+      try {
+        const baseViewport = pageProxy.getViewport({ scale: 1 });
+        widthPoints = Math.max(1, Math.round(baseViewport.width));
+        heightPoints = Math.max(1, Math.round(baseViewport.height));
+      } finally {
+        try {
+          pageProxy.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
 
       if (options.signal?.aborted) {
         cancelled = true;
         break;
       }
 
-      if (rendered.clampedByCanvasLimit) {
-        clampedPages.push(pageNumber);
-      }
-
-      const storedImg = await importImageBlob(
-        rendered.blob,
-        {
-          width: rendered.width,
-          height: rendered.height,
-        },
-        rendered.hash,
-      );
-      pageAssetIds.push(storedImg.assetId);
-
       const altText = `${baseName}, pagina ${pageNumber} di ${totalDocPages}`;
-      const aspectRatio = rendered.width / Math.max(1, rendered.height);
+      const aspectRatio = widthPoints / Math.max(1, heightPoints);
 
       if (options.mode === 'single-container') {
         useStore.getState().updatePage(
@@ -244,7 +236,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
             if (existingTarget && (existingTarget.type === 'container' || existingTarget.type === 'text')) {
               const containerW = Math.max(240, existingTarget.w || DEFAULT_PDF_CONTAINER_WIDTH);
               const usefulW = Math.max(120, containerW - 24);
-              const proportionalW = Math.round((rendered.widthPoints / 595.28) * usefulW);
+              const proportionalW = Math.round((widthPoints / 595.28) * usefulW);
               const displayW = Math.min(usefulW, Math.max(160, proportionalW));
 
               const content: JSONContent[] = existingTarget.doc.content ? [...existingTarget.doc.content] : [];
@@ -267,11 +259,11 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
 
               const blockAttrs: ImageBlockAttrs = {
                 id: newId(),
-                assetId: storedImg.assetId,
+                assetId: '',
                 width: indentedW,
-                naturalWidth: rendered.width,
-                naturalHeight: rendered.height,
-                mime: rendered.mime,
+                naturalWidth: widthPoints,
+                naturalHeight: heightPoints,
+                mime: 'application/pdf',
                 rotation: 0,
                 alt: altText,
                 indent: inheritedIndent,
@@ -279,6 +271,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
                   type: 'pdf',
                   assetId: pdfAsset.assetId,
                   page: pageNumber,
+                  mode: 'live',
                 },
               };
 
@@ -318,17 +311,17 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
             containerIds.push(newContainerId);
             const containerW = DEFAULT_PDF_CONTAINER_WIDTH;
             const usefulW = containerW - 24;
-            const proportionalW = Math.round((rendered.widthPoints / 595.28) * usefulW);
+            const proportionalW = Math.round((widthPoints / 595.28) * usefulW);
             const displayW = Math.min(usefulW, Math.max(160, proportionalW));
             const displayH = Math.max(40, Math.round(displayW / aspectRatio));
 
             const blockAttrs: ImageBlockAttrs = {
               id: newId(),
-              assetId: storedImg.assetId,
+              assetId: '',
               width: displayW,
-              naturalWidth: rendered.width,
-              naturalHeight: rendered.height,
-              mime: rendered.mime,
+              naturalWidth: widthPoints,
+              naturalHeight: heightPoints,
+              mime: 'application/pdf',
               rotation: 0,
               alt: altText,
               indent: 0,
@@ -336,6 +329,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
                 type: 'pdf',
                 assetId: pdfAsset.assetId,
                 page: pageNumber,
+                mode: 'live',
               },
             };
 
@@ -364,7 +358,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
         );
       } else {
         // Mode: 'one-per-container' (each page as a freeImage container in a vertical column)
-        const proportionalW = Math.round((rendered.widthPoints / 595.28) * DEFAULT_PDF_FREE_WIDTH);
+        const proportionalW = Math.round((widthPoints / 595.28) * DEFAULT_PDF_FREE_WIDTH);
         const displayW = Math.min(960, Math.max(200, proportionalW));
         const displayH = Math.max(60, Math.round(displayW / aspectRatio));
         const freeId = newId();
@@ -372,11 +366,11 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
 
         const blockAttrs: ImageBlockAttrs = {
           id: newId(),
-          assetId: storedImg.assetId,
+          assetId: '',
           width: displayW,
-          naturalWidth: rendered.width,
-          naturalHeight: rendered.height,
-          mime: rendered.mime,
+          naturalWidth: widthPoints,
+          naturalHeight: heightPoints,
+          mime: 'application/pdf',
           rotation: 0,
           alt: altText,
           indent: 0,
@@ -384,6 +378,7 @@ export async function importPdfDocument(options: PdfImportOptions): Promise<PdfI
             type: 'pdf',
             assetId: pdfAsset.assetId,
             page: pageNumber,
+            mode: 'live',
           },
         };
 

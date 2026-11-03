@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
 import { useAssetUrl } from '../storage/assets';
+import { usePdfPageUrl } from '../pdf/pageCache';
 import { shapeElement, strokeElement } from '../canvas/render';
 import type { ShapeItem, StrokeItem } from '../types';
 
@@ -12,7 +13,6 @@ export const ImageBlockView = memo(function ImageBlockView({
   getPos,
 }: NodeViewProps) {
   const { id, assetId, width, naturalWidth, naturalHeight, rotation, indent, alt, annotations, source } = node.attrs;
-  const { url, missing } = useAssetUrl(assetId);
   const containerRef = useRef<HTMLDivElement>(null);
   const [resizing, setResizing] = useState(false);
   const [nearViewport, setNearViewport] = useState(true);
@@ -20,6 +20,12 @@ export const ImageBlockView = memo(function ImageBlockView({
   const displayWidth = width || Math.min(naturalWidth || 400, 600);
   const aspectRatio = naturalWidth && naturalHeight ? naturalWidth / naturalHeight : 1.333;
   const displayHeight = Math.round(displayWidth / aspectRatio);
+
+  const isLivePdf = Boolean(!assetId && source && source.type === 'pdf' && source.assetId && source.page >= 1);
+  const rasterAsset = useAssetUrl(isLivePdf ? '' : assetId || '');
+  const pdfPage = usePdfPageUrl(isLivePdf ? source : null, displayWidth, nearViewport && isLivePdf);
+  const url = isLivePdf ? pdfPage.url : rasterAsset.url;
+  const missing = isLivePdf ? Boolean(pdfPage.error) : rasterAsset.missing;
 
   // Lazy-unload decoded bitmaps for pages far outside the viewport (>1600px away) in large documents,
   // while preserving exact container dimensions so layout never shifts.

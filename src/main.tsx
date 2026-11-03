@@ -12,6 +12,7 @@ import { getAsset, getDB, listAssetIds } from './storage/db';
 import { flush } from './storage/autosave';
 import { openPdfImportDialog, usePdfImportState } from './components/PdfImportDialog';
 import { destroyPdfDocument, openPdfDocument, renderPdfPageToBlob } from './pdf/renderer';
+import { getPdfPageUrl, getPageCacheStats, clearPageCache } from './pdf/pageCache';
 import { clearPrint, preparePrint } from './export/PrintRoot';
 import { DEFAULT_PRINT_OPTIONS } from './export/pagination';
 
@@ -27,6 +28,9 @@ const debugHandle = {
   openPdfImportDialog,
   openPdfDocument,
   renderPdfPage: renderPdfPageToBlob,
+  getPdfPageUrl,
+  getPageCacheStats,
+  clearPageCache,
   destroyPdfDocument,
   preparePrint,
   clearPrint,

@@ -4,14 +4,11 @@ import { AlertTriangle, FileText, Layers, LayoutList, Loader2, Lock, X } from 'l
 import { Modal } from './Dialogs';
 import { toast, useUI } from '../store/ui';
 import { useStore } from '../store/useStore';
-import { useSettings } from '../store/settings';
 import {
-  PDF_QUALITY_PRESETS,
   type PdfDocumentMeta,
   type PdfImportProgress,
   type PdfImportTarget,
   type PdfInsertMode,
-  type PdfQualityPreset,
 } from '../pdf/types';
 import {
   inspectPdfDocument,
@@ -180,10 +177,7 @@ export function PdfImportDialog() {
 
 function PdfImportDialogInner() {
   const session = usePdfImportState();
-  const defaultQuality = useSettings((s) => s.pdfQuality);
-  const format = useSettings((s) => s.pdfFormat);
 
-  const [quality, setQuality] = useState<PdfQualityPreset>(defaultQuality);
   const [mode, setMode] = useState<PdfInsertMode>('single-container');
   const [rangeMode, setRangeMode] = useState<'all' | 'custom'>('all');
   const [rangeInput, setRangeInput] = useState('');
@@ -206,13 +200,13 @@ function PdfImportDialogInner() {
         alive = false;
       };
     }
-    void checkPdfStorageQuota(parsedRange.pages.length, session.file.size, quality, format).then((res) => {
+    void checkPdfStorageQuota(parsedRange.pages.length, session.file.size).then((res) => {
       if (alive) setQuotaCheck(res);
     });
     return () => {
       alive = false;
     };
-  }, [session.status, session.file, parsedRange.pages.length, quality, format]);
+  }, [session.status, session.file, parsedRange.pages.length]);
 
   const onPasswordSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -254,8 +248,6 @@ function PdfImportDialogInner() {
       file,
       fileName,
       pages: pagesToImport,
-      quality,
-      format,
       mode,
       password,
       target,
@@ -463,27 +455,6 @@ function PdfImportDialogInner() {
             </div>
 
             <div className="pdf-field-group">
-              <label className="pdf-group-label" htmlFor="pdf-quality-select">
-                Qualità di rendering (lossless {format === 'webp' ? 'WebP' : 'PNG'})
-              </label>
-              <div className="segmented" role="group" aria-label="Qualità di rendering">
-                {(['standard', 'high', 'maximum'] as PdfQualityPreset[]).map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    className={quality === q ? 'active' : ''}
-                    aria-pressed={quality === q}
-                    onClick={() => setQuality(q)}
-                    data-testid={`pdf-quality-${q}`}
-                  >
-                    {q === 'standard' ? 'Standard (150 DPI)' : q === 'high' ? 'Alta (220 DPI)' : 'Massima (300 DPI)'}
-                  </button>
-                ))}
-              </div>
-              <p className="hint">{PDF_QUALITY_PRESETS[quality].description}</p>
-            </div>
-
-            <div className="pdf-field-group">
               <label className="pdf-group-label">Modalità di inserimento</label>
               <div className="pdf-mode-cards">
                 <button
@@ -521,8 +492,8 @@ function PdfImportDialogInner() {
 
             {quotaCheck && (
               <div className="pdf-storage-info">
-                <span className="hint">
-                  Spazio stimato: ~{formatBytes(quotaCheck.estimatedBytes)}
+                <span className="hint" data-testid="pdf-storage-estimate">
+                  Occupa circa {formatBytes(quotaCheck.estimatedBytes)}
                   {Number.isFinite(quotaCheck.availableBytes)
                     ? ` (disponibili ${formatBytes(quotaCheck.availableBytes)})`
                     : ''}

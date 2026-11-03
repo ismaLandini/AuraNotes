@@ -84,10 +84,17 @@ export interface PdfSourceAttr {
   type: 'pdf';
   assetId: ID;
   page: number;
+  /** 'live' indicates on-demand vector rendering; absent for legacy rasterized imports */
+  mode?: 'live';
 }
 
 export interface ImageBlockAttrs {
   id?: ID;
+  /**
+   * Reference to stored raster image asset in IndexedDB.
+   * For live on-demand vector PDF blocks, this is set to empty string `''`
+   * and the page is rendered dynamically using `source.assetId`.
+   */
   assetId: ID;
   width: number;
   naturalWidth: number;

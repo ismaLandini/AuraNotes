@@ -300,7 +300,7 @@ export async function openPdfDocument(
   }
 }
 
-interface CanvasPair {
+export interface CanvasPair {
   kind: 'offscreen' | 'dom' | 'headless';
   canvas: OffscreenCanvas | HTMLCanvasElement;
   ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -502,7 +502,7 @@ export async function readPngDimensions(blob: Blob): Promise<{ width: number; he
   };
 }
 
-function createCanvasSurface(width: number, height: number): CanvasPair & { getDigest?: () => number } {
+export function createCanvasSurface(width: number, height: number): CanvasPair & { getDigest?: () => number } {
   const w = Math.max(1, Math.floor(width));
   const h = Math.max(1, Math.floor(height));
 
@@ -573,7 +573,7 @@ function createCanvasSurface(width: number, height: number): CanvasPair & { getD
   throw new Error('Impossibile inizializzare il contesto grafico Canvas 2D.');
 }
 
-function releaseCanvasSurface(surface: CanvasPair): void {
+export function releaseCanvasSurface(surface: CanvasPair): void {
   try {
     surface.canvas.width = 0;
     surface.canvas.height = 0;
@@ -586,7 +586,7 @@ function releaseCanvasSurface(surface: CanvasPair): void {
  * Encodes a rendered Canvas or OffscreenCanvas into a lossless PNG or lossless WebP Blob.
  * Never uses JPEG or lossy compression.
  */
-async function encodeCanvasLossless(
+export async function encodeCanvasLossless(
   surface: CanvasPair & { getDigest?: () => number },
   format: PdfLosslessFormat,
 ): Promise<{ blob: Blob; mime: 'image/png' | 'image/webp' }> {
@@ -651,12 +651,17 @@ async function encodeCanvasLossless(
   throw new Error('Impossibile codificare la pagina PDF in formato lossless.');
 }
 
-async function renderPageOntoSurface(
+export async function renderPageOntoSurface(
   page: PDFPageProxy,
   scale: number,
   width: number,
   height: number,
+  signal?: AbortSignal,
 ): Promise<CanvasPair & { getDigest?: () => number }> {
+  if (signal?.aborted) {
+    throw new DOMException('Operazione annullata', 'AbortError');
+  }
+
   const viewport = page.getViewport({ scale });
   const surface = createCanvasSurface(width, height);
   const { ctx } = surface;
@@ -673,6 +678,10 @@ async function renderPageOntoSurface(
     const tileSize = 2048;
     for (let ty = 0; ty < height; ty += tileSize) {
       for (let tx = 0; tx < width; tx += tileSize) {
+        if (signal?.aborted) {
+          releaseCanvasSurface(surface);
+          throw new DOMException('Operazione annullata', 'AbortError');
+        }
         const tw = Math.min(tileSize, width - tx);
         const th = Math.min(tileSize, height - ty);
         const tileSurface = createCanvasSurface(tw, th);
@@ -687,8 +696,39 @@ async function renderPageOntoSurface(
             annotationMode: AnnotationMode.ENABLE,
             background: 'rgb(255,255,255)',
           });
-          await renderTask.promise;
+
+          const onAbort = () => {
+            try {
+              renderTask.cancel();
+            } catch {
+              /* ignore */
+            }
+          };
+          if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+          }
+
+          try {
+            await renderTask.promise;
+          } catch (err: unknown) {
+            if (signal?.aborted) {
+              throw new DOMException('Operazione annullata', 'AbortError');
+            }
+            const e = err as { name?: string };
+            if (e?.name === 'RenderingCancelledException') {
+              throw new DOMException('Operazione annullata', 'AbortError');
+            }
+            throw err;
+          } finally {
+            if (signal) {
+              signal.removeEventListener('abort', onAbort);
+            }
+          }
+
           ctx.drawImage(tileSurface.canvas as CanvasImageSource, tx, ty);
+        } catch (err) {
+          releaseCanvasSurface(surface);
+          throw err;
         } finally {
           releaseCanvasSurface(tileSurface);
         }
@@ -704,8 +744,36 @@ async function renderPageOntoSurface(
     annotationMode: AnnotationMode.ENABLE,
     background: 'rgb(255,255,255)',
   });
-  await renderTask.promise;
-  return surface;
+
+  const onAbort = () => {
+    try {
+      renderTask.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
+  if (signal) {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  try {
+    await renderTask.promise;
+    return surface;
+  } catch (err: unknown) {
+    releaseCanvasSurface(surface);
+    if (signal?.aborted) {
+      throw new DOMException('Operazione annullata', 'AbortError');
+    }
+    const e = err as { name?: string };
+    if (e?.name === 'RenderingCancelledException') {
+      throw new DOMException('Operazione annullata', 'AbortError');
+    }
+    throw err;
+  } finally {
+    if (signal) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
 }
 
 /**

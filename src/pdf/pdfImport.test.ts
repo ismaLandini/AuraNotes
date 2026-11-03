@@ -70,19 +70,24 @@ describe('importPdfDocument', () => {
     for (let i = 0; i < 4; i++) {
       const attrs = imageNodes[i].attrs as ImageBlockAttrs;
       expect(attrs.alt).toBe(`Slide Lezione 1, pagina ${i + 1} di 4`);
+      expect(attrs.assetId).toBe('');
+      expect(attrs.mime).toBe('application/pdf');
       expect(attrs.source).toEqual({
         type: 'pdf',
         assetId: result.pdfAssetId,
         page: i + 1,
+        mode: 'live',
       });
-      expect(attrs.naturalWidth).toBe(1500);
-      expect(attrs.naturalHeight).toBe(843);
+      expect(attrs.naturalWidth).toBe(720);
+      expect(attrs.naturalHeight).toBe(405);
     }
 
-    // Verify original PDF is stored in IndexedDB assets
+    // Verify ONLY original PDF is stored in IndexedDB assets (no per-page PNG blobs)
     const pdfAsset = await getAsset(result.pdfAssetId);
     expect(pdfAsset).toBeDefined();
     expect(pdfAsset?.mime).toBe('application/pdf');
+    expect(await listAssetIds()).toEqual([result.pdfAssetId]);
+    expect(result.pageAssetIds).toEqual([]);
   });
 
   it('inserts PDF pages at the specified drop index inside an existing container', async () => {
@@ -176,33 +181,33 @@ describe('importPdfDocument', () => {
       type: 'pdf',
       assetId: result.pdfAssetId,
       page: 2,
+      mode: 'live',
     });
   });
 
-  it('deduplicates both the original PDF asset and rendered page blobs when importing the same PDF twice', async () => {
+  it('deduplicates the original PDF asset when importing the same PDF twice without storing page rasters', async () => {
     const bytes = createVectorFormulasPdf();
     const file1 = pdfBytesToFile(bytes, 'Copia1.pdf');
     const file2 = pdfBytesToFile(bytes, 'Copia2.pdf');
 
     const res1 = await importPdfDocument({
       file: file1,
-      quality: 'standard',
       mode: 'single-container',
     });
     const assetsAfterFirst = await listAssetIds();
-    // 1 PDF + 4 distinct page PNGs = 5 assets
-    expect(assetsAfterFirst).toHaveLength(5);
+    // Only 1 raw PDF asset is stored
+    expect(assetsAfterFirst).toHaveLength(1);
 
     const res2 = await importPdfDocument({
       file: file2,
-      quality: 'standard',
       mode: 'one-per-container',
     });
     const assetsAfterSecond = await listAssetIds();
 
     expect(res2.pdfAssetId).toBe(res1.pdfAssetId);
-    expect(res2.pageAssetIds).toEqual(res1.pageAssetIds);
-    expect(assetsAfterSecond).toHaveLength(5);
+    expect(res2.pdfDeduplicated).toBe(true);
+    expect(res2.pageAssetIds).toEqual([]);
+    expect(assetsAfterSecond).toHaveLength(1);
   });
 
   it('supports progressive import of 110+ pages, mid-import cancellation via AbortController, and single Cmd+Z undo with asset cleanup', async () => {
@@ -212,7 +217,6 @@ describe('importPdfDocument', () => {
 
     const result = await importPdfDocument({
       file,
-      quality: 'standard',
       mode: 'single-container',
       signal: abortController.signal,
       onProgress: (p) => {
@@ -230,7 +234,7 @@ describe('importPdfDocument', () => {
     const pageAfterImport = useStore.getState().currentPage()!;
     expect(Object.keys(pageAfterImport.items)).toHaveLength(1);
     const assetsDuring = await listAssetIds();
-    expect(assetsDuring.length).toBeGreaterThan(1);
+    expect(assetsDuring).toHaveLength(1);
 
     // Single Cmd+Z undoes the entire 5-page progressive import and garbage-collects orphan assets
     const undone = useStore.getState().undo();
@@ -268,8 +272,8 @@ describe('importPdfDocument', () => {
   });
 
   it('checks storage quota before import', async () => {
-    const check = await checkPdfStorageQuota(5, 100_000, 'high', 'png');
+    const check = await checkPdfStorageQuota(5, 100_000);
     expect(check.ok).toBe(true);
-    expect(check.estimatedBytes).toBeGreaterThan(100_000);
+    expect(check.estimatedBytes).toBe(100_000);
   });
 });

@@ -18,12 +18,15 @@ export const CHROMIUM_CANVAS_LIMITS: CanvasLimits = {
   maxArea: 67_108_864, // 8192 * 8192
 };
 
-export function detectCanvasLimits(): CanvasLimits {
-  if (typeof navigator !== 'undefined') {
-    const ua = navigator.userAgent || '';
-    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg/i.test(ua);
-    if (isSafari) return SAFARI_SAFE_CANVAS_LIMITS;
-  }
+export function detectCanvasLimits(ua?: string): CanvasLimits {
+  const userAgent =
+    ua !== undefined
+      ? ua
+      : typeof navigator !== 'undefined'
+        ? navigator.userAgent || ''
+        : '';
+  const isWebKit = /AppleWebKit/i.test(userAgent) && !/Chrome|Chromium|Edg|Electron/i.test(userAgent);
+  if (isWebKit) return SAFARI_SAFE_CANVAS_LIMITS;
   return CHROMIUM_CANVAS_LIMITS;
 }
 
@@ -175,15 +178,18 @@ export function parsePageRange(input: string, numPages: number): { pages: number
 }
 
 /**
- * Conservative estimate of required IndexedDB storage bytes for a PDF import,
- * including the original PDF asset + lossless page images.
+ * Conservative estimate of required IndexedDB storage bytes for a PDF import.
+ * Under the lightweight live-vector model, only the deduplicated raw PDF file is stored in IndexedDB.
  */
 export function estimatePdfImportBytes(
   pageCount: number,
   pdfByteSize: number,
-  quality: PdfQualityPreset,
-  format: PdfLosslessFormat,
+  quality?: PdfQualityPreset,
+  format?: PdfLosslessFormat,
 ): number {
+  if (quality === undefined && format === undefined) {
+    return Math.round(pdfByteSize);
+  }
   const perPagePngBytes =
     quality === 'standard'
       ? 450 * 1024

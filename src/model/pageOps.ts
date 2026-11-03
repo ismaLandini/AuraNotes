@@ -161,15 +161,16 @@ export function reorderZ(page: PageContent, ids: ID[], move: ZMove): PageContent
 
 /** Extracts plain text from a TipTap JSON document (used for search & titles). */
 export function docToText(doc: JSONContent | undefined): string {
-  if (!doc) return '';
+  if (!doc || typeof doc !== 'object') return '';
   const parts: string[] = [];
-  const walk = (n: JSONContent) => {
+  const walk = (n: JSONContent | undefined | null) => {
+    if (!n || typeof n !== 'object') return;
     if (n.type === 'text' && n.text) parts.push(n.text);
     if ((n.type === 'mathInline' || n.type === 'mathBlock') && n.attrs?.latex) parts.push(String(n.attrs.latex));
     if (n.type === 'imageBlock' && n.attrs?.alt) {
       parts.push(String(n.attrs.alt));
     }
-    if (n.content) n.content.forEach(walk);
+    if (n.content && Array.isArray(n.content)) n.content.forEach(walk);
     if (n.type && ['paragraph', 'heading', 'listItem', 'taskItem', 'codeBlock', 'blockquote', 'tableCell', 'tableHeader', 'mathBlock', 'imageBlock'].includes(n.type)) {
       parts.push('\n');
     }
@@ -187,9 +188,10 @@ export function pageSearchText(page: PageContent): string {
   return out.join('\n').slice(0, 20000);
 }
 
-function extractDocAssets(doc: JSONContent | undefined, out: Set<ID>): void {
-  if (!doc) return;
-  const walk = (n: JSONContent) => {
+export function extractDocAssets(doc: JSONContent | undefined | null, out: Set<ID>): void {
+  if (!doc || typeof doc !== 'object') return;
+  const walk = (n: JSONContent | undefined | null) => {
+    if (!n || typeof n !== 'object') return;
     if (n.type === 'imageBlock') {
       if (n.attrs?.assetId) out.add(String(n.attrs.assetId));
       const src = n.attrs?.source as { type?: unknown; assetId?: unknown } | undefined | null;
@@ -197,16 +199,23 @@ function extractDocAssets(doc: JSONContent | undefined, out: Set<ID>): void {
         out.add(src.assetId);
       }
     }
-    if (n.content) n.content.forEach(walk);
+    if (n.content && Array.isArray(n.content)) n.content.forEach(walk);
   };
   walk(doc);
 }
 
 export function referencedAssets(page: PageContent): Set<ID> {
   const s = new Set<ID>();
+  if (!page || !page.items || typeof page.items !== 'object') return s;
   for (const it of Object.values(page.items)) {
-    if (it.type === 'image') s.add(it.assetId);
-    if (it.type === 'container' && it.doc) extractDocAssets(it.doc, s);
+    if (!it) continue;
+    if (it.type === 'image' && it.assetId) {
+      s.add(it.assetId);
+    } else if (it.type === 'container' && it.doc) {
+      extractDocAssets(it.doc, s);
+    } else if (it.type === 'text' && it.doc) {
+      extractDocAssets(it.doc, s);
+    }
   }
   return s;
 }
@@ -223,7 +232,8 @@ export const EMPTY_DOC: JSONContent = { type: 'doc', content: [{ type: 'paragrap
 
 export function isDocEmpty(doc: JSONContent | null | undefined): boolean {
   if (!doc) return true;
-  const hasContent = (node: JSONContent): boolean => {
+  const hasContent = (node: JSONContent | undefined | null): boolean => {
+    if (!node || typeof node !== 'object') return false;
     if (
       node.type === 'imageBlock' ||
       node.type === 'mathInline' ||
@@ -327,10 +337,11 @@ export function repairPage(page: PageContent): PageContent {
 
 /** Recursively removes legacy ocr and highlights attributes from any imageBlock node in a document. */
 export function stripOcrFromDoc(doc: JSONContent): JSONContent {
-  if (!doc || !doc.content) return doc;
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.content)) return doc;
   let modified = false;
   const cleanNodes = (nodes: JSONContent[]): JSONContent[] => {
     return nodes.map((n) => {
+      if (!n || typeof n !== 'object') return n;
       let node = n;
       if (n.type === 'imageBlock' && n.attrs && ('ocr' in n.attrs || 'highlights' in n.attrs)) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -338,7 +349,7 @@ export function stripOcrFromDoc(doc: JSONContent): JSONContent {
         node = { ...n, attrs: cleanAttrs };
         modified = true;
       }
-      if (node.content) {
+      if (node.content && Array.isArray(node.content)) {
         const nextChildren = cleanNodes(node.content);
         if (nextChildren !== node.content) {
           node = { ...node, content: nextChildren };
@@ -357,7 +368,7 @@ export function stripOcrFromPage(page: PageContent): PageContent {
   let modified = false;
   const nextItems = { ...page.items };
   for (const [id, it] of Object.entries(page.items)) {
-    if (it.type === 'container' && it.doc) {
+    if ((it.type === 'container' || it.type === 'text') && it.doc) {
       const cleanDoc = stripOcrFromDoc(it.doc);
       if (cleanDoc !== it.doc) {
         nextItems[id] = { ...it, doc: cleanDoc };
@@ -476,9 +487,10 @@ export function migratePageV1toV2(page: PageContent): PageContent {
 }
 
 function sanitizeImageSourceInDoc(doc: JSONContent | undefined): { doc: JSONContent | undefined; changed: boolean } {
-  if (!doc) return { doc, changed: false };
+  if (!doc || typeof doc !== 'object') return { doc, changed: false };
   let changed = false;
   const walk = (n: JSONContent): JSONContent => {
+    if (!n || typeof n !== 'object') return n;
     let nextNode = n;
     if (n.type === 'imageBlock' && n.attrs && 'source' in n.attrs) {
       const src = n.attrs.source as Record<string, unknown> | null | undefined;
@@ -499,7 +511,7 @@ function sanitizeImageSourceInDoc(doc: JSONContent | undefined): { doc: JSONCont
         }
       }
     }
-    if (nextNode.content) {
+    if (nextNode.content && Array.isArray(nextNode.content)) {
       let childChanged = false;
       const nextContent = nextNode.content.map((c) => {
         const wc = walk(c);
@@ -527,7 +539,7 @@ export function migratePageV2toV3(page: PageContent): PageContent {
   let itemsChanged = false;
   const nextItems: Record<ID, CanvasItem> = {};
   for (const [id, it] of Object.entries(v2.items)) {
-    if (it.type === 'container' && it.doc) {
+    if ((it.type === 'container' || it.type === 'text') && it.doc) {
       const { doc, changed } = sanitizeImageSourceInDoc(it.doc);
       if (changed && doc) {
         nextItems[id] = { ...it, doc };
@@ -549,13 +561,18 @@ export function migratePageV2toV3(page: PageContent): PageContent {
 
 /** Removes an imageBlock matching blockId (or the first matching assetId) from a TipTap document. */
 export function removeImageBlockFromDoc(doc: JSONContent, assetId: ID, blockId?: ID): JSONContent {
+  if (!doc || typeof doc !== 'object') return doc;
   let removed = false;
   const hasBlockIdMatch = blockId
-    ? (doc.content ?? []).some((n) => n.type === 'imageBlock' && n.attrs?.id === blockId)
+    ? (Array.isArray(doc.content) ? doc.content : []).some((n) => n && typeof n === 'object' && n.type === 'imageBlock' && n.attrs?.id === blockId)
     : false;
   const filterNodes = (nodes: JSONContent[]): JSONContent[] => {
     const out: JSONContent[] = [];
     for (const n of nodes) {
+      if (!n || typeof n !== 'object') {
+        out.push(n);
+        continue;
+      }
       if (!removed && n.type === 'imageBlock') {
         const match = hasBlockIdMatch ? n.attrs?.id === blockId : n.attrs?.assetId === assetId;
         if (match) {
@@ -563,13 +580,13 @@ export function removeImageBlockFromDoc(doc: JSONContent, assetId: ID, blockId?:
           continue;
         }
       }
-      out.push(n.content ? { ...n, content: filterNodes(n.content) } : n);
+      out.push(n.content && Array.isArray(n.content) ? { ...n, content: filterNodes(n.content) } : n);
     }
     return out;
   };
   return {
     ...doc,
-    content: doc.content ? filterNodes(doc.content) : [],
+    content: Array.isArray(doc.content) ? filterNodes(doc.content) : [],
   };
 }
 
@@ -580,7 +597,7 @@ export function insertImageBlockIntoDoc(
   insertIndex?: number,
   containerWidth?: number,
 ): JSONContent {
-  const content = doc.content ? [...doc.content] : [];
+  const content = doc && Array.isArray(doc.content) ? [...doc.content] : [];
   const idx =
     insertIndex !== undefined && insertIndex >= 0 && insertIndex <= content.length
       ? insertIndex
@@ -659,7 +676,7 @@ export function moveImageToCanvas(
         !updatedDoc.content ||
         updatedDoc.content.length === 0 ||
         (updatedDoc.content.length === 1 &&
-          updatedDoc.content[0].type === 'paragraph' &&
+          updatedDoc.content[0]?.type === 'paragraph' &&
           (!updatedDoc.content[0].content || updatedDoc.content[0].content.length === 0));
 
       if (isEmpty) {
@@ -711,7 +728,7 @@ export function moveImageIntoContainer(
         !updatedSourceDoc.content ||
         updatedSourceDoc.content.length === 0 ||
         (updatedSourceDoc.content.length === 1 &&
-          updatedSourceDoc.content[0].type === 'paragraph' &&
+          updatedSourceDoc.content[0]?.type === 'paragraph' &&
           (!updatedSourceDoc.content[0].content || updatedSourceDoc.content[0].content.length === 0));
 
       if (isEmpty) {

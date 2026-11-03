@@ -93,7 +93,7 @@ export interface PdfImportOptions {
   file: File | Blob;
   fileName?: string;
   pages?: number[]; // 1-based page numbers in order (defaults to all pages)
-  quality: PdfQualityPreset;
+  quality?: PdfQualityPreset;
   format?: PdfLosslessFormat;
   mode: PdfInsertMode;
   password?: string;

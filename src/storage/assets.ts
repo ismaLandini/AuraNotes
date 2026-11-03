@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ID } from '../types';
-import { getAsset, getAssetByHash, putAsset } from './db';
+import { deleteAssets, getAsset, getAssetByHash, listAssetIds, loadAllPages, putAsset } from './db';
+import { referencedAssets } from '../model/pageOps';
 import { newId } from '../model/workspaceOps';
+
 
 const urlCache = new Map<ID, string>();
 const pending = new Map<ID, Promise<string | null>>();
@@ -220,3 +222,32 @@ export function dataUrlToBlob(dataUrl: string): Blob {
   }
   return new Blob([decodeURIComponent(m[3])], { type: mime });
 }
+
+/**
+ * Scans all pages in IndexedDB and removes assets that are no longer referenced by any page.
+ * Also revokes object URLs in the in-memory urlCache.
+ *
+ * @param _excludeFuture Retained for API compatibility with useStore signature
+ * @param extraReferenced Optional set of asset IDs referenced in-memory (e.g. undo history)
+ * @returns The number of reclaimed orphan assets.
+ */
+export async function garbageCollectAssets(
+  _excludeFuture = false,
+  extraReferenced?: Iterable<ID>,
+): Promise<number> {
+  const all = await loadAllPages();
+  const referenced = new Set<ID>(extraReferenced);
+  for (const p of all) {
+    for (const a of referencedAssets(p)) {
+      referenced.add(a);
+    }
+  }
+  const stored = await listAssetIds();
+  const orphan = stored.filter((a) => !referenced.has(a));
+  if (orphan.length > 0) {
+    for (const id of orphan) revokeAssetUrl(id);
+    await deleteAssets(orphan);
+  }
+  return orphan.length;
+}
+

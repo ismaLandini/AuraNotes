@@ -52,19 +52,23 @@ function ExportDialogInner() {
   const [picked, setPicked] = useState<ID[]>(pageId ? [pageId] : []);
   const ids = useScopePages(scope, picked);
   const [pages, setPages] = useState<PrintPage[] | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const currentKey = ids.join(',');
 
   useEffect(() => {
     let alive = true;
-    setPages(null);
     void Promise.all(ids.map((id) => useStore.getState().ensurePageLoaded(id))).then((contents) => {
       if (!alive) return;
       setPages(contents.map((c, i) => ({ id: ids[i], title: useStore.getState().workspace.pages[ids[i]]?.title ?? '', content: c })));
+      setLoadedFor(currentKey);
     });
     return () => {
       alive = false;
     };
-  }, [ids]);
+  }, [ids, currentKey]);
+
+  const activePages = loadedFor === currentKey ? pages : null;
 
   const set = (patch: Partial<PrintOptions>) => {
     const next = { ...opts, ...patch };
@@ -77,14 +81,14 @@ function ExportDialogInner() {
   };
 
   const docTitle = useMemo(() => {
-    if (scope === 'page' && pageId) return ws.pages[pageId]?.title ?? 'GlassNotes';
-    if (sectionId) return ws.sections[sectionId]?.name ?? 'GlassNotes';
-    return 'GlassNotes';
+    if (scope === 'page' && pageId) return ws.pages[pageId]?.title ?? 'AuraNotes';
+    if (sectionId) return ws.sections[sectionId]?.name ?? 'AuraNotes';
+    return 'AuraNotes';
   }, [scope, pageId, sectionId, ws]);
 
-  const job: PrintJob | null = pages
+  const job: PrintJob | null = activePages
     ? {
-        pages,
+        pages: activePages,
         options: opts,
         docTitle,
         paperClass: `paper-${settings.paper}`,
@@ -162,7 +166,7 @@ function ExportDialogInner() {
               <option value="page">Pagina corrente</option>
               <option value="selected">Pagine scelte della sezione</option>
               <option value="section">Intera sezione</option>
-              <option value="notebook">Intero blocco appunti</option>
+              <option value="notebook">Intero quaderno</option>
             </select>
           </label>
           {scope === 'selected' && section && (

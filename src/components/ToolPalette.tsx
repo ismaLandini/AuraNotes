@@ -1,11 +1,39 @@
 import type { ReactNode } from 'react';
-import { Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, Pen, Plus, Scan, Spline, Square, StickyNote, Type } from 'lucide-react';
+import { Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, PanelLeft, Pen, Plus, Scan, Spline, Square, StickyNote, Type } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import type { BackgroundPattern, Tool } from '../types';
 import { useSettings } from '../store/settings';
+import { useUI } from '../store/ui';
 import { formatCombo } from '../shortcuts/registry';
 import { centerContent, fitContent, resetZoom, zoomAt } from '../canvas/viewport';
 import { defaultViewport } from '../canvas/viewport';
+
+export function NavMiniMenu({ compact }: { compact?: boolean }) {
+  const sidebarVisible = useSettings((s) => s.layout.sidebarVisible);
+  const setLayout = useSettings((s) => s.setLayout);
+  const layout = useSettings((s) => s.layout);
+  const ui = useUI();
+
+  const toggleSidebar = () => {
+    if (compact) ui.set({ mobileNavOpen: !ui.mobileNavOpen });
+    else setLayout({ sidebarVisible: !layout.sidebarVisible });
+  };
+
+  return (
+    <div className="nav-minimenu glass" data-ui title="Quaderni / Sezioni / Pagine">
+      <button
+        className={`tool-btn nav-toggle-btn${sidebarVisible ? ' active' : ''}`}
+        onClick={toggleSidebar}
+        title={`Pannelli di navigazione (${formatCombo('mod+shift+b')})`}
+        aria-label="Mostra o nascondi navigazione"
+        aria-pressed={sidebarVisible}
+        data-testid="toggle-sidebar"
+      >
+        <PanelLeft size={18} />
+      </button>
+    </div>
+  );
+}
 
 export const TOOL_DEFS: Array<{ tool: Tool; label: string; key: string; icon: ReactNode; group: number }> = [
   { tool: 'select', label: 'Selezione', key: 'v', icon: <MousePointer2 size={18} />, group: 0 },
@@ -27,6 +55,17 @@ export function ToolPalette() {
   const tool = useStore((s) => s.tool);
   const hasPage = useStore((s) => !!s.pageId);
   if (!hasPage) return null;
+
+  const onToolClick = (t: Tool) => {
+    const cur = useStore.getState().tool;
+    if (cur === t) {
+      // Re-clicking an active tool toggles back to the default text / writing mode ('select')
+      useStore.getState().setTool('select');
+    } else {
+      useStore.getState().setTool(t);
+    }
+  };
+
   return (
     <nav className="tool-palette glass" data-ui aria-label="Strumenti di disegno" data-testid="tool-palette">
       {TOOL_DEFS.map((t, i) => {
@@ -36,7 +75,7 @@ export function ToolPalette() {
             {sep && <span className="tool-sep" />}
             <button
               className={`tool-btn${tool === t.tool ? ' active' : ''}`}
-              onClick={() => useStore.getState().setTool(t.tool)}
+              onClick={() => onToolClick(t.tool)}
               title={`${t.label} (${t.key.toUpperCase()})`}
               aria-label={t.label}
               aria-pressed={tool === t.tool}

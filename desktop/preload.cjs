@@ -1,7 +1,7 @@
-/** Narrow, explicit bridge between the GlassNotes page and the macOS shell. */
+/** Narrow, explicit bridge between the AuraNotes page and the macOS shell. */
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('glassnotesDesktop', {
+const bridge = {
   platform: process.platform,
   /** Called by main before the window closes: the page saves, then confirms. */
   onFlushRequest(handler) {
@@ -20,4 +20,8 @@ contextBridge.exposeInMainWorld('glassnotesDesktop', {
   openBackups: () => ipcRenderer.invoke('glassnotes:open-backups'),
   savePdf: (title) => ipcRenderer.invoke('glassnotes:save-pdf', { title }),
   info: () => ipcRenderer.invoke('glassnotes:info'),
-});
+  setTheme: (theme, dark) => ipcRenderer.invoke('glassnotes:set-theme', { theme, dark }),
+};
+
+contextBridge.exposeInMainWorld('auranotesDesktop', bridge);
+contextBridge.exposeInMainWorld('glassnotesDesktop', bridge);

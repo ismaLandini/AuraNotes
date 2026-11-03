@@ -1,20 +1,32 @@
 /**
- * GlassNotes for macOS — Electron main process.
+ * AuraNotes for macOS — Electron main process.
  *
  * The web app (vite build in ../dist) is served from a private `app://glassnotes`
  * origin: no local server, no port, no file:// quirks. IndexedDB for that origin
- * lives in ~/Library/Application Support/GlassNotes, so notes persist across launches.
- * Rolling JSON backups are also written to ~/Library/Application Support/GlassNotes/Backups.
+ * lives in ~/Library/Application Support/AuraNotes, so notes persist across launches.
+ * Rolling JSON backups are also written to ~/Library/Application Support/AuraNotes/Backups.
  */
-const { app, BrowserWindow, protocol, net, Menu, shell, ipcMain, dialog, screen } = require('electron');
+const { app, BrowserWindow, protocol, net, Menu, shell, ipcMain, dialog, screen, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 
-const APP_NAME = 'GlassNotes';
+const APP_NAME = 'AuraNotes';
 const SCHEME = 'app';
 const HOST = 'glassnotes';
 const START_URL = `${SCHEME}://${HOST}/index.html`;
+
+// Automatic migration from GlassNotes to AuraNotes if needed
+try {
+  const appData = app.getPath('appData');
+  const auraUserData = path.join(appData, 'AuraNotes');
+  const glassUserData = path.join(appData, 'GlassNotes');
+  if (!fs.existsSync(auraUserData) && fs.existsSync(glassUserData)) {
+    fs.cpSync(glassUserData, auraUserData, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Migrazione dati da GlassNotes non riuscita:', e);
+}
 
 app.setName(APP_NAME);
 
@@ -67,6 +79,32 @@ function saveWindowState(win) {
   }
 }
 
+// ------------------------------------------------------------------ theme state
+const themeFile = () => path.join(userData(), 'theme-state.json');
+
+function loadThemeState() {
+  try {
+    const raw = fs.readFileSync(themeFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed?.theme ?? 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+function saveThemeState(theme) {
+  try {
+    fs.writeFileSync(themeFile(), JSON.stringify({ theme }));
+  } catch {
+    /* best effort */
+  }
+}
+
+const initialTheme = loadThemeState();
+if (initialTheme === 'dark' || initialTheme === 'light' || initialTheme === 'system') {
+  nativeTheme.themeSource = initialTheme;
+}
+
 // ------------------------------------------------------------------ static files over app://
 function serveFile(request) {
   const url = new URL(request.url);
@@ -83,6 +121,7 @@ function serveFile(request) {
 // ------------------------------------------------------------------ window
 function createWindow() {
   const saved = loadWindowState();
+  const isDark = nativeTheme.shouldUseDarkColors;
   const win = new BrowserWindow({
     width: saved?.width ?? 1440,
     height: saved?.height ?? 900,
@@ -91,8 +130,9 @@ function createWindow() {
     minWidth: 720,
     minHeight: 480,
     title: APP_NAME,
-    titleBarStyle: 'default',
-    backgroundColor: '#eef2f7',
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 12, y: 9 },
+    backgroundColor: isDark ? '#1e1e1e' : '#081e42',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -153,10 +193,10 @@ ipcMain.handle('glassnotes:write-backup', async (_e, json) => {
   if (typeof json !== 'string' || json.length < 2) throw new Error('Backup vuoto');
   await fs.promises.mkdir(backupsDir(), { recursive: true });
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
-  const file = path.join(backupsDir(), `glassnotes-${stamp}.json`);
+  const file = path.join(backupsDir(), `auranotes-${stamp}.json`);
   await fs.promises.writeFile(file + '.tmp', json, 'utf8');
   await fs.promises.rename(file + '.tmp', file);
-  const all = (await fs.promises.readdir(backupsDir())).filter((f) => /^glassnotes-.*\.json$/.test(f)).sort();
+  const all = (await fs.promises.readdir(backupsDir())).filter((f) => /^(glassnotes|auranotes)-.*\.json$/.test(f)).sort();
   for (const old of all.slice(0, Math.max(0, all.length - MAX_BACKUPS))) await fs.promises.rm(path.join(backupsDir(), old), { force: true });
   return file;
 });
@@ -168,7 +208,7 @@ ipcMain.handle('glassnotes:open-backups', async () => {
 
 ipcMain.handle('glassnotes:save-pdf', async (e, { title }) => {
   const win = BrowserWindow.fromWebContents(e.sender);
-  const safe = String(title || 'GlassNotes').replace(/[\\/:*?"<>|]/g, '-').slice(0, 120);
+  const safe = String(title || APP_NAME).replace(/[\\/:*?"<>|]/g, '-').slice(0, 120);
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     title: 'Esporta PDF',
     defaultPath: path.join(app.getPath('documents'), `${safe}.pdf`),
@@ -182,6 +222,23 @@ ipcMain.handle('glassnotes:save-pdf', async (e, { title }) => {
 });
 
 ipcMain.handle('glassnotes:info', () => ({ version: app.getVersion(), userData: userData(), backups: backupsDir() }));
+
+ipcMain.handle('glassnotes:set-theme', (_e, { theme, dark }) => {
+  if (theme === 'dark' || theme === 'light' || theme === 'system') {
+    nativeTheme.themeSource = theme;
+    saveThemeState(theme);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const isDark = typeof dark === 'boolean' ? dark : nativeTheme.shouldUseDarkColors;
+    mainWindow.setBackgroundColor(isDark ? '#1e1e1e' : '#081e42');
+  }
+});
+
+nativeTheme.on('updated', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#081e42');
+  }
+});
 
 // ------------------------------------------------------------------ menu
 function send(cmd) {
@@ -211,6 +268,7 @@ function buildMenu() {
       label: 'File',
       submenu: [
         item('Nuova pagina', 'new-page', 'CmdOrCtrl+Alt+N'),
+        item('Importa PDF…', 'import-pdf', 'CmdOrCtrl+Shift+P'),
         { type: 'separator' },
         item('Esporta PDF…', 'export-pdf', 'CmdOrCtrl+P'),
         { type: 'separator' },

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import type { ID, PageContent } from '../types';
 import { StaticPage } from '../canvas/render';
+import { enhanceStaticHTML } from '../editor/StaticRichText';
 import { contentBounds, itemBounds } from '../lib/geometry';
 import { computeLayout, PAPERS, type PrintOptions, type SheetLayout } from './pagination';
 
@@ -79,14 +80,18 @@ export function countSheets(job: PrintJob): number {
 }
 
 async function waitForAssets(root: HTMLElement) {
+  await enhanceStaticHTML(root);
   const imgs = Array.from(root.querySelectorAll('img'));
   await Promise.all(
-    imgs.map((img) =>
-      img.complete ? Promise.resolve() : new Promise<void>((res) => {
-        img.onload = () => res();
-        img.onerror = () => res();
-      }),
-    ),
+    imgs.map(async (img) => {
+      if (!img.complete) {
+        await new Promise<void>((res) => {
+          img.onload = () => res();
+          img.onerror = () => res();
+        });
+      }
+      await img.decode?.().catch(() => {});
+    }),
   );
   if (document.fonts?.ready) await document.fonts.ready;
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

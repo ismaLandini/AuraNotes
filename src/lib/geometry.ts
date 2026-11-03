@@ -106,7 +106,8 @@ export function worldPoints(item: CanvasItem, items: Record<string, CanvasItem>)
 /** Axis-aligned world bounds of an item. */
 export function itemBounds(item: CanvasItem, items: Record<string, CanvasItem>): Rect {
   switch (item.type) {
-    case 'text': {
+    case 'text':
+    case 'container': {
       const parent = item.parentId ? items[item.parentId] : undefined;
       if (parent && parent.type === 'image') {
         const p = fromImageLocal(parent, item.x, item.y);
@@ -180,12 +181,19 @@ export function fixedAnchorPoint(item: CanvasItem, items: Record<string, CanvasI
 /** Pushes a perimeter point outwards by the connector gap so the line does not touch the object. */
 function withGap(item: CanvasItem, items: Record<string, CanvasItem>, a: { x: number; y: number }): Point {
   const p = fixedAnchorPoint(item, items, a);
-  const r = itemBounds(item, items);
-  const c = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-  const dx = p.x - c.x;
-  const dy = p.y - c.y;
-  const len = Math.hypot(dx, dy) || 1;
-  return { x: p.x + (dx / len) * CONNECT_GAP, y: p.y + (dy / len) * CONNECT_GAP };
+  let nx = (a.x >= 0.999 ? 1 : 0) - (a.x <= 0.001 ? 1 : 0);
+  let ny = (a.y >= 0.999 ? 1 : 0) - (a.y <= 0.001 ? 1 : 0);
+  if (nx === 0 && ny === 0) {
+    const r = itemBounds(item, items);
+    nx = p.x - (r.x + r.w / 2);
+    ny = p.y - (r.y + r.h / 2);
+  } else if (item.type === 'image' && !item.parentId && item.rotation) {
+    const rot = rotatePoint({ x: nx, y: ny }, { x: 0, y: 0 }, item.rotation);
+    nx = rot.x;
+    ny = rot.y;
+  }
+  const len = Math.hypot(nx, ny) || 1;
+  return { x: p.x + (nx / len) * CONNECT_GAP, y: p.y + (ny / len) * CONNECT_GAP };
 }
 
 function anchorEnd(item: CanvasItem, items: Record<string, CanvasItem>, anchor: Anchor, towards: Point): Point {
@@ -214,6 +222,41 @@ export function connectorEndpoints(
   const from = anchorEnd(a, items, c.fromAnchor, anchorTarget(b, items, c.toAnchor));
   const to = anchorEnd(b, items, c.toAnchor, anchorTarget(a, items, c.fromAnchor));
   return { from, to };
+}
+
+/**
+ * Returns the closest normalised point `{ x, y }` on the item's perimeter (0..1 along any of the 4 sides)
+ * for any world point `p` (whether inside the item, on its outline, or outside near it).
+ */
+export function closestPerimeterAnchor(item: CanvasItem, items: Record<string, CanvasItem>, p: Point): { x: number; y: number } {
+  let w: number;
+  let h: number;
+  let lx: number;
+  let ly: number;
+  if (item.type === 'image' && !item.parentId) {
+    const l = toImageLocal(item, p.x, p.y);
+    w = item.w;
+    h = item.h;
+    lx = l.x * w;
+    ly = l.y * h;
+  } else {
+    const r = itemBounds(item, items);
+    w = r.w;
+    h = r.h;
+    lx = p.x - r.x;
+    ly = p.y - r.y;
+  }
+  if (w <= 0 || h <= 0) return { x: 0.5, y: 0 };
+  const cx = Math.max(0, Math.min(w, lx));
+  const cy = Math.max(0, Math.min(h, ly));
+  const dists = [
+    { d: Math.abs(ly), x: cx, y: 0 },
+    { d: Math.abs(h - ly), x: cx, y: h },
+    { d: Math.abs(lx), x: 0, y: cy },
+    { d: Math.abs(w - lx), x: w, y: cy },
+  ].sort((m, n) => m.d - n.d);
+  const best = dists[0];
+  return { x: best.x / w, y: best.y / h };
 }
 
 /**
@@ -280,6 +323,7 @@ function polylineHit(pts: Point[], p: Point, tol: number, closed = false): boole
 export function hitTest(item: CanvasItem, items: Record<string, CanvasItem>, p: Point, tol: number): boolean {
   switch (item.type) {
     case 'text':
+    case 'container':
       return pointInRect(p, itemBounds(item, items));
     case 'image': {
       const l = toImageLocal(item, p.x, p.y);

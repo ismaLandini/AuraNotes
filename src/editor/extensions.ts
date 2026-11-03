@@ -1,4 +1,6 @@
-import { Extension, Node, mergeAttributes, type Extensions } from '@tiptap/core';
+import { Extension, Node, mergeAttributes, type Extensions, type JSONContent } from '@tiptap/core';
+import { Plugin } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextStyle from '@tiptap/extension-text-style';
@@ -19,6 +21,8 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
 import katex from 'katex';
 import { askText } from '../store/ui';
+import { ImageBlock } from './ImageBlock';
+import { ParagraphFormat } from './paragraphFormat';
 
 export const lowlight = createLowlight(common);
 
@@ -84,7 +88,7 @@ export const Indent = Extension.create({
   addGlobalAttributes() {
     return [
       {
-        types: ['paragraph', 'heading'],
+        types: ['paragraph', 'heading', 'imageBlock'],
         attributes: {
           indent: {
             default: 0,
@@ -106,7 +110,7 @@ export const Indent = Extension.create({
             const { from, to } = state.selection;
             let changed = false;
             state.doc.nodesBetween(from, to, (node, pos) => {
-              if (node.type.name === 'paragraph' || node.type.name === 'heading') {
+              if (node.type.name === 'paragraph' || node.type.name === 'heading' || node.type.name === 'imageBlock') {
                 const cur = (node.attrs.indent as number) || 0;
                 const next = Math.max(0, Math.min(INDENT_MAX, cur + delta));
                 if (next !== cur) {
@@ -130,12 +134,20 @@ export const Indent = Extension.create({
     return {
       Tab: () => {
         if (this.editor.isActive('codeBlock')) return this.editor.commands.insertContent('  ');
-        if (this.editor.isActive('table')) return false;
+        if (this.editor.isActive('table')) {
+          if (this.editor.commands.goToNextCell()) return true;
+          if (this.editor.can().addRowAfter()) {
+            return this.editor.chain().addRowAfter().goToNextCell().run();
+          }
+          return true;
+        }
         this.editor.commands.indent();
         return true; // keep focus inside the editor
       },
       'Shift-Tab': () => {
-        if (this.editor.isActive('table')) return false;
+        if (this.editor.isActive('table')) {
+          return this.editor.commands.goToPreviousCell();
+        }
         this.editor.commands.outdent();
         return true;
       },
@@ -221,7 +233,105 @@ export const MathCommands = Extension.create({
   },
 });
 
+const WIKI_LINK_LIVE_RE = /\[\[([^[\]\n]+?)\]\]/g;
+
+export const WikiLinkExtension = Extension.create({
+  name: 'wikiLinkDecorations',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          decorations(state) {
+            const decos: Decoration[] = [];
+            state.doc.descendants((node, pos) => {
+              if (node.type.name === 'codeBlock') return false;
+              if (!node.isText || !node.text || !node.text.includes('[[')) return;
+              WIKI_LINK_LIVE_RE.lastIndex = 0;
+              for (const m of node.text.matchAll(WIKI_LINK_LIVE_RE)) {
+                const start = pos + (m.index ?? 0);
+                const end = start + m[0].length;
+                const target = m[1].trim();
+                if (!target) continue;
+                decos.push(
+                  Decoration.inline(start, end, {
+                    class: 'wiki-link-live',
+                    'data-wiki-link': target,
+                    title: `⌘+Clic per aprire "${target}"`,
+                  }),
+                );
+              }
+            });
+            return decos.length ? DecorationSet.create(state.doc, decos) : DecorationSet.empty;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 export const HIGHLIGHT_COLORS = ['#ffe066', '#b2f2bb', '#a5d8ff', '#ffc9de', '#ffd8a8', '#d0bfff'];
+
+export const CustomTableCell = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: (el) => el.style.backgroundColor || el.getAttribute('data-background-color') || null,
+        renderHTML: (attrs) => {
+          if (!attrs.backgroundColor) return {};
+          return {
+            'data-background-color': attrs.backgroundColor,
+            style: `background-color: ${attrs.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
+export const CustomTableHeader = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      backgroundColor: {
+        default: null,
+        parseHTML: (el) => el.style.backgroundColor || el.getAttribute('data-background-color') || null,
+        renderHTML: (attrs) => {
+          if (!attrs.backgroundColor) return {};
+          return {
+            'data-background-color': attrs.backgroundColor,
+            style: `background-color: ${attrs.backgroundColor}`,
+          };
+        },
+      },
+    };
+  },
+});
+
+export function createTableDoc(rows = 3, cols = 3, withHeaderRow = true): JSONContent {
+  const content: JSONContent[] = [];
+  for (let r = 0; r < rows; r++) {
+    const isHeader = withHeaderRow && r === 0;
+    const rowContent: JSONContent[] = [];
+    for (let c = 0; c < cols; c++) {
+      rowContent.push({
+        type: isHeader ? 'tableHeader' : 'tableCell',
+        content: [{ type: 'paragraph' }],
+      });
+    }
+    content.push({ type: 'tableRow', content: rowContent });
+  }
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'table',
+        content,
+      },
+    ],
+  };
+}
 
 export function getExtensions(): Extensions {
   return [
@@ -232,21 +342,29 @@ export function getExtensions(): Extensions {
     FontFamily,
     FontSize,
     Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    TextAlign.configure({ types: ['heading', 'paragraph', 'imageBlock'] }),
     Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } }),
     Subscript,
     Superscript,
     TaskList,
     TaskItem.configure({ nested: true }),
-    Table.configure({ resizable: false }),
+    Table.configure({
+      resizable: true,
+      lastColumnResizable: true,
+      cellMinWidth: 40,
+      handleWidth: 5,
+    }),
     TableRow,
-    TableHeader,
-    TableCell,
+    CustomTableHeader,
+    CustomTableCell,
     CodeBlockLowlight.configure({ lowlight, defaultLanguage: null }),
     Indent,
+    ImageBlock,
+    ParagraphFormat,
     MathInline,
     MathBlock,
     MathCommands,
+    WikiLinkExtension,
   ];
 }
 

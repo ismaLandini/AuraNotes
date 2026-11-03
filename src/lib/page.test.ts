@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE_WIDTH, constrainChanged, constrainItem, sheetBottom, A4_HEIGHT, SHEET_TOP } from './page';
+import { PAGE_WIDTH, constrainChanged, constrainItem, sheetBottom, sheetLeft, sheetRight, TWO_A4_HEIGHT, SHEET_TOP, MAX_PAGE_ITEM_WIDTH } from './page';
 import { perimeterAnchorAt, connectorEndpoints, fixedAnchorPoint } from './geometry';
 import * as P from '../model/pageOps';
 import type { CanvasItem, ConnectorItem, ImageItem, PageContent, TextItem } from '../types';
@@ -7,32 +7,41 @@ import type { CanvasItem, ConnectorItem, ImageItem, PageContent, TextItem } from
 const text = (id: string, x: number, w = 200): TextItem => ({ id, type: 'text', x, y: 0, w, h: 40, doc: P.EMPTY_DOC, variant: 'plain' });
 const image = (id: string, x: number, w: number, h: number): ImageItem => ({ id, type: 'image', x, y: 0, w, h, rotation: 0, assetId: 'a', naturalWidth: w, naturalHeight: h, mime: 'image/png' });
 
-describe('two-A4 page width', () => {
+describe('two-A4 page geometry and item constraints', () => {
   it('is 420 mm wide at print scale', () => {
     expect(PAGE_WIDTH).toBe(1587);
   });
-  it('shifts objects back inside the page', () => {
-    const t = constrainItem(text('t', 1500), {}) as TextItem;
-    expect(t.x + t.w).toBe(PAGE_WIDTH);
+  it('prevents objects from moving past the left margin', () => {
     expect((constrainItem(text('t', -50), {}) as TextItem).x).toBe(0);
   });
-  it('scales oversized images and text blocks to the page width keeping proportions', () => {
+  it('scales oversized images and text blocks to the max item width (1850 px)', () => {
     const i = constrainItem(image('i', 0, 3000, 600), {}) as ImageItem;
-    expect(i.w).toBeCloseTo(PAGE_WIDTH);
-    expect(i.h).toBeCloseTo(600 * (PAGE_WIDTH / 3000));
-    expect((constrainItem(text('t', 0, 5000), {}) as TextItem).w).toBe(PAGE_WIDTH);
+    expect(i.w).toBeCloseTo(MAX_PAGE_ITEM_WIDTH);
+    expect(i.h).toBeCloseTo(600 * (MAX_PAGE_ITEM_WIDTH / 3000));
+    expect((constrainItem(text('t', 0, 5000), {}) as TextItem).w).toBe(MAX_PAGE_ITEM_WIDTH);
   });
   it('leaves untouched items of existing pages where they are', () => {
     const old: PageContent = P.addItems(P.emptyPage('p'), [text('legacy', 1700), text('t', 10)]);
     const next = P.updateItems(old, { t: { x: 1600 } });
     const c = constrainChanged(old, next);
     expect((c.items.legacy as TextItem).x).toBe(1700);
-    expect((c.items.t as TextItem).x + 200).toBe(PAGE_WIDTH);
+    expect((c.items.t as TextItem).x).toBe(1600);
   });
-  it('grows the sheet with the content, at least one A4 tall', () => {
-    expect(sheetBottom(P.emptyPage('p'))).toBe(SHEET_TOP + A4_HEIGHT);
+  it('grows the sheet with the content, at least two vertical A4 tall (~2245 px)', () => {
+    expect(sheetBottom(P.emptyPage('p'))).toBe(SHEET_TOP + TWO_A4_HEIGHT);
     const p = P.addItems(P.emptyPage('p'), [{ ...text('t', 0), y: 3000 }]);
     expect(sheetBottom(p)).toBeGreaterThan(3000);
+  });
+  it('calculates horizontal bounds with sheetLeft and sheetRight', () => {
+    const empty = P.emptyPage('p');
+    expect(sheetLeft(empty)).toBe(0);
+    expect(sheetRight(empty)).toBe(PAGE_WIDTH);
+
+    const extendedRight = P.addItems(empty, [text('r', 2000, 300)]);
+    expect(sheetRight(extendedRight)).toBeGreaterThan(2300);
+
+    const extendedLeft = P.addItems(empty, [{ ...text('l', -300, 200), x: -300 }]);
+    expect(sheetLeft(extendedLeft)).toBeLessThan(-300);
   });
 });
 

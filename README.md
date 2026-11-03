@@ -1,19 +1,19 @@
-# GlassNotes
+# AuraNotes
 
 App web per prendere appunti universitari su macOS, ispirata alla struttura di OneNote (blocchi appunti → sezioni → pagine) e al canvas libero, con un’interfaccia originale in stile *Liquid Glass*. Funziona in locale nel browser, offline, senza account né server: i dati restano in IndexedDB sul tuo Mac.
 
-## Usarla come app del Mac (GlassNotes.app)
+## Usarla come app del Mac (AuraNotes.app)
 
-Fai doppio clic su **GlassNotes.app**: si apre direttamente, senza terminale, server o porte. Puoi trascinarla in *Applicazioni* e nel Dock.
+Fai doppio clic su **AuraNotes.app**: si apre direttamente, senza terminale, server o porte. Puoi trascinarla in *Applicazioni* e nel Dock.
 
-- **Dove sono i dati**: `~/Library/Application Support/GlassNotes` (IndexedDB dell'app). Restano lì anche se sposti, aggiorni o elimini GlassNotes.app.
+- **Dove sono i dati**: `~/Library/Application Support/AuraNotes` (IndexedDB dell'app). Restano lì anche se sposti, aggiorni o elimini AuraNotes.app.
 - **Salvataggio**: automatico mentre scrivi; alla chiusura (⌘Q o chiudendo la finestra) l'app finisce di salvare prima di uscire.
-- **Backup automatici**: ogni 20 minuti, se qualcosa è cambiato, e alla chiusura, in `~/Library/Application Support/GlassNotes/Backups` (si tengono gli ultimi 20). Dal menu File → *Mostra cartella dei backup automatici*.
+- **Backup automatici**: ogni 20 minuti, se qualcosa è cambiato, e alla chiusura, in `~/Library/Application Support/AuraNotes/Backups` (si tengono gli ultimi 20). Dal menu File → *Mostra cartella dei backup automatici*.
 - **Appunti scritti nella versione browser**: hanno un archivio separato (legato all'indirizzo `localhost`). Esportali dal browser con *Impostazioni → Esporta backup* e importali nell'app con *File → Importa backup…* (scegli *Unisci*).
 - **PDF**: nell'app il pulsante *Salva PDF…* crea il file direttamente; *Stampa…* apre la finestra di stampa.
 - Al primo avvio macOS potrebbe dire che l'app è di uno sviluppatore non identificato: clic destro sull'icona → *Apri* → *Apri*. Serve una volta sola.
 
-### Ricreare GlassNotes.app
+### Ricreare AuraNotes.app
 
 Requisiti: Node.js 20 o superiore.
 
@@ -22,10 +22,10 @@ cd glassnote
 npm install
 npm run app:mac                      # Mac con chip Apple (M1/M2/M3/M4)
 npm run app:mac -- --arch=x64        # Mac Intel
-npm run app:mac -- --out=..          # copia anche GlassNotes.app nella cartella sopra
+npm run app:mac -- --out=..          # copia anche AuraNotes.app nella cartella sopra
 ```
 
-Il risultato è in `release/GlassNotes-darwin-arm64/GlassNotes.app`. Su macOS lo script lo firma in modo ad-hoc. Se la rete blocca il download di Electron, scarica a mano `electron-v44.7.0-darwin-arm64.zip` dalle release di Electron su GitHub in una cartella e lancia `ELECTRON_ZIP_DIR=/quella/cartella npm run app:mac`.
+Il risultato è in `release/AuraNotes-darwin-arm64/AuraNotes.app`. Su macOS lo script lo firma in modo ad-hoc. Se la rete blocca il download di Electron, scarica a mano `electron-v44.7.0-darwin-arm64.zip` dalle release di Electron su GitHub in una cartella e lancia `ELECTRON_ZIP_DIR=/quella/cartella npm run app:mac`.
 
 Per provare l'app senza impacchettarla: `npm run app:dev`.
 
@@ -48,7 +48,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | test unitari e di componente (Vitest + Testing Library) |
 | `npm run test:e2e` | test end-to-end nel browser (Playwright) |
 | `npm run check` | typecheck + lint + test + build in sequenza |
-| `npm run app:mac` | crea GlassNotes.app |
+| `npm run app:mac` | crea AuraNotes.app |
 | `npm run app:dev` | avvia l'app desktop dalla cartella del progetto |
 | `xvfb-run node e2e-desktop/desktop.mjs` (Linux) o `node e2e-desktop/desktop.mjs` (Mac) | prova l'app desktop: chiusura, riapertura, dati e backup |
 
@@ -139,8 +139,8 @@ e2e/                    test Playwright dei flussi completi
 
 ## Limitazioni note
 
-- Nella versione browser i dati vivono nell’origine in cui usi l’app: cancellare i dati del sito li elimina. GlassNotes.app ha un archivio proprio sul Mac, con backup automatici.
-- GlassNotes.app non è firmata con un certificato Apple Developer: al primo avvio serve clic destro → Apri.
+- Nella versione browser i dati vivono nell’origine in cui usi l’app: cancellare i dati del sito li elimina. AuraNotes.app ha un archivio proprio sul Mac, con backup automatici.
+- AuraNotes.app non è firmata con un certificato Apple Developer: al primo avvio serve clic destro → Apri.
 - Il testo nelle immagini e la scrittura a mano non sono ricercabili (nessun OCR).
 - La rotazione delle immagini avviene a passi di 90°; i tratti a mano libera si spostano ma non si ridimensionano.
 - Gli oggetti di pagine molto grandi sono tutti presenti nel DOM (nessuna virtualizzazione): con centinaia di immagini grandi il canvas può rallentare.

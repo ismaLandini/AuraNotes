@@ -34,6 +34,28 @@ describe('connectors', () => {
   it('return null when a target is missing', () => {
     expect(G.connectorEndpoints(conn('a', 'zzz'), { a: box('a', 0, 0) })).toBeNull();
   });
+
+  it('projects any point onto the closest perimeter coordinate across all 4 sides and corners', () => {
+    const t1 = box('t1', 0, 0, 400, 100);
+    const t2 = box('t2', 500, 200, 300, 80);
+    const items: Record<string, CanvasItem> = { t1, t2 };
+    // Interior point closer to top edge at x=25%
+    const aTop = G.closestPerimeterAnchor(t1, items, { x: 100, y: 20 });
+    expect(aTop).toEqual({ x: 0.25, y: 0 });
+    // Interior point closer to bottom edge at x=75%
+    const aBot = G.closestPerimeterAnchor(t1, items, { x: 300, y: 82 });
+    expect(aBot).toEqual({ x: 0.75, y: 1 });
+    // Interior point closer to left edge at y=40%
+    const aLeft = G.closestPerimeterAnchor(t2, items, { x: 515, y: 232 });
+    expect(aLeft).toEqual({ x: 0, y: 0.4 });
+    // Interior point closer to right edge at y=60%
+    const aRight = G.closestPerimeterAnchor(t2, items, { x: 790, y: 248 });
+    expect(aRight).toEqual({ x: 1, y: 0.6 });
+
+    const ep = G.connectorEndpoints(conn('t1', 't2', { fromAnchor: aTop, toAnchor: aRight }), items)!;
+    expect(ep.from).toEqual({ x: 100, y: -4 });
+    expect(ep.to).toEqual({ x: 804, y: 248 });
+  });
 });
 
 describe('image local frame', () => {

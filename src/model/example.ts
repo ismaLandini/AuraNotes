@@ -13,7 +13,7 @@ const bold = [{ type: 'bold' }];
 const hl = (color: string) => [{ type: 'highlight', attrs: { color } }];
 
 function text(id: ID, x: number, y: number, w: number, content: JSONContent[], variant: 'plain' | 'sticky' = 'plain', bg?: string): CanvasItem {
-  return { id, type: 'text', x, y, w, h: 80, doc: { type: 'doc', content }, variant, ...(bg ? { bg } : {}) };
+  return { id, type: 'container', x, y, w, h: 80, doc: { type: 'doc', content }, variant, ...(bg ? { bg } : {}) };
 }
 
 export function buildExampleWorkspace(): { workspace: Workspace; pages: Record<ID, PageContent> } {
@@ -24,7 +24,7 @@ export function buildExampleWorkspace(): { workspace: Workspace; pages: Record<I
   const p1 = W.newId();
   const p2 = W.newId();
   const p3 = W.newId();
-  ws = W.createNotebook(ws, 'Benvenuto in GlassNotes', nb);
+  ws = W.createNotebook(ws, 'Benvenuto in AuraNotes', nb);
   ws = W.createSection(ws, nb, 'Per iniziare', s1);
   ws = W.createSection(ws, nb, 'Esempio: Analisi 1', s2);
   ws = W.createPage(ws, s1, 'Come funziona', p1);
@@ -36,7 +36,7 @@ export function buildExampleWorkspace(): { workspace: Workspace; pages: Record<I
   const c = W.newId();
   const welcome = addItems(emptyPage(p1), [
     text(a, 80, 60, 460, [
-      h(1, 'Benvenuto in GlassNotes'),
+      h(1, 'Benvenuto in AuraNotes'),
       p(t('Un quaderno libero per gli appunti universitari: scrivi '), t('ovunque', bold), t(' sulla pagina, incolla immagini, disegna e collega i concetti.')),
       { type: 'bulletList', content: [
         li(t('Doppio clic su un blocco per modificarne il testo.')),

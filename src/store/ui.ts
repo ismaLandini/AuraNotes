@@ -28,15 +28,23 @@ export interface Toast {
   message: string;
 }
 
+export type HomeTab = 'notebooks' | 'recent' | 'favorites' | 'trash';
+
 interface UIState {
   confirm: ConfirmRequest | null;
   prompt: PromptRequest | null;
   toasts: Toast[];
+  homeOpen: boolean;
+  homeTab: HomeTab;
+  homeNotebookId: string | null;
   searchOpen: boolean;
   settingsOpen: boolean;
   shortcutsOpen: boolean;
   exportOpen: boolean;
   trashOpen: boolean;
+  pdfDialogOpen: boolean;
+  templatePickerOpen: boolean;
+  outlineOpen: boolean;
   mobileNavOpen: boolean;
   set: (patch: Partial<Omit<UIState, 'set'>>) => void;
 }
@@ -45,11 +53,17 @@ export const useUI = create<UIState>((set) => ({
   confirm: null,
   prompt: null,
   toasts: [],
+  homeOpen: true,
+  homeTab: 'notebooks',
+  homeNotebookId: null,
   searchOpen: false,
   settingsOpen: false,
   shortcutsOpen: false,
   exportOpen: false,
   trashOpen: false,
+  pdfDialogOpen: false,
+  templatePickerOpen: false,
+  outlineOpen: false,
   mobileNavOpen: false,
   set: (patch) => set(patch),
 }));
@@ -97,5 +111,5 @@ export function askText(opts: Omit<PromptRequest, 'resolve'>): Promise<string | 
 /** True when any modal dialog is open (global shortcuts should then be suspended). */
 export function isModalOpen(): boolean {
   const s = useUI.getState();
-  return !!(s.confirm || s.prompt || s.searchOpen || s.settingsOpen || s.exportOpen || s.trashOpen);
+  return !!(s.confirm || s.prompt || s.searchOpen || s.settingsOpen || s.exportOpen || s.trashOpen || s.pdfDialogOpen || s.templatePickerOpen);
 }

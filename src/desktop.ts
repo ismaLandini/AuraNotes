@@ -1,6 +1,6 @@
 /**
- * Integration with the macOS shell (GlassNotes.app). In a normal browser
- * `window.glassnotesDesktop` is absent and nothing here runs.
+ * Integration with the macOS shell (AuraNotes.app). In a normal browser
+ * `window.auranotesDesktop` is absent and nothing here runs.
  */
 import { flush, hasUnsavedChanges } from './storage/autosave';
 import { useStore } from './store/useStore';
@@ -8,6 +8,7 @@ import { useUI } from './store/ui';
 import { useSettings } from './store/settings';
 import { buildBackup } from './storage/backup';
 import { exportBackup, pickBackupFile } from './components/SettingsDialog';
+import { pickPdfFile } from './canvas/actions';
 
 export interface DesktopBridge {
   platform: string;
@@ -17,10 +18,12 @@ export interface DesktopBridge {
   openBackups(): Promise<void>;
   savePdf(title: string): Promise<string | null>;
   info(): Promise<{ version: string; userData: string; backups: string }>;
+  setTheme(theme: string, dark: boolean): Promise<void>;
 }
 
 export function desktop(): DesktopBridge | null {
-  return (window as unknown as { glassnotesDesktop?: DesktopBridge }).glassnotesDesktop ?? null;
+  const w = window as unknown as { auranotesDesktop?: DesktopBridge; glassnotesDesktop?: DesktopBridge };
+  return w.auranotesDesktop ?? w.glassnotesDesktop ?? null;
 }
 
 export const isDesktop = () => desktop() !== null;
@@ -51,6 +54,9 @@ function runMenu(cmd: string) {
   switch (cmd) {
     case 'new-page':
       if (st.sectionId) st.addPage();
+      break;
+    case 'import-pdf':
+      pickPdfFile();
       break;
     case 'export-pdf':
       if (st.pageId) ui.set({ exportOpen: true });
@@ -93,5 +99,5 @@ export function initDesktop(): void {
   // First backup shortly after start (once the notes are loaded), then periodically.
   setTimeout(() => void autoBackup(true), 15_000);
   setInterval(() => void autoBackup(), BACKUP_EVERY_MS);
-  void d.info().then((i) => console.info(`GlassNotes ${i.version} — dati in ${i.userData}`));
+  void d.info().then((i) => console.info(`AuraNotes ${i.version} — dati in ${i.userData}`));
 }

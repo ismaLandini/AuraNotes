@@ -28,3 +28,8 @@ playwright-report
 
 release
 build/icon-1024.png
+
+# Agent metadata and Tauri build artifacts
+.agents/
+src-tauri/target/
+

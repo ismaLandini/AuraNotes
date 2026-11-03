@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as W from './workspaceOps';
 import * as P from './pageOps';
-import type { CanvasItem, ImageItem, PageContent, ShapeItem, StrokeItem, TextItem } from '../types';
+import type { CanvasItem, ImageItem, NoteContainerItem, PageContent, ShapeItem, StrokeItem, TextItem } from '../types';
 
 function setup() {
   let ws = W.emptyWorkspace();
@@ -52,6 +52,18 @@ describe('workspace operations', () => {
     expect(ws.pages.p1.sectionId).toBe('s2');
   });
 
+  it('moves a section into another notebook', () => {
+    let ws = setup();
+    ws = W.createNotebook(ws, 'Fisica', 'nb2');
+    ws = W.moveSection(ws, 's2', 'nb2');
+    expect(ws.notebooks.nb1.sectionIds).toEqual(['s1']);
+    expect(ws.notebooks.nb2.sectionIds).toEqual(['s2']);
+    expect(ws.sections.s2.notebookId).toBe('nb2');
+    expect(ws.sections.s2.pageIds).toEqual(['p3']);
+    // same notebook: nothing changes
+    expect(W.moveSection(ws, 's1', 'nb1')).toBe(ws);
+  });
+
   it('trashes and restores pages', () => {
     let ws = setup();
     ws = W.trashPage(ws, 'p1');
@@ -86,6 +98,45 @@ describe('workspace operations', () => {
     expect(fixed.notebookIds).toEqual(['nb1']);
     expect(fixed.sections.s1.pageIds).toEqual(['p1']);
     expect(fixed.pages.p2).toBeUndefined();
+  });
+
+  it('manages page tags and collects workspace tags', () => {
+    let ws = setup();
+    expect(W.normalizeTag('  #Esame Finale!  ')).toBe('esame-finale');
+    ws = W.addPageTag(ws, 'p1', '#Esame');
+    ws = W.addPageTag(ws, 'p1', 'importante');
+    ws = W.addPageTag(ws, 'p2', 'esame');
+    expect(ws.pages.p1.tags).toEqual(['esame', 'importante']);
+    expect(W.allWorkspaceTags(ws, 's1')).toEqual(['esame', 'importante']);
+    ws = W.removePageTag(ws, 'p1', 'esame');
+    expect(ws.pages.p1.tags).toEqual(['importante']);
+    ws = W.removePageTag(ws, 'p1', 'importante');
+    expect(ws.pages.p1.tags).toBeUndefined();
+  });
+
+  it('toggles favorite stars on notebooks, sections, and pages', () => {
+    let ws = setup();
+    ws = W.toggleNotebookStar(ws, 'nb1');
+    ws = W.toggleSectionStar(ws, 's1');
+    ws = W.togglePageStar(ws, 'p1');
+    expect(ws.notebooks.nb1.starred).toBe(true);
+    expect(ws.sections.s1.starred).toBe(true);
+    expect(ws.pages.p1.starred).toBe(true);
+    ws = W.toggleNotebookStar(ws, 'nb1');
+    expect(ws.notebooks.nb1.starred).toBe(false);
+  });
+
+  it('extracts wiki-links, resolves target pages, and finds backlinks', () => {
+    let ws = setup();
+    expect(W.extractWikiLinks('Vedi [[Derivate]] e anche [[derivate]] o [[Esercizio 1]].')).toEqual(['Derivate', 'Esercizio 1']);
+    expect(W.resolveWikiLink(ws, 'derivate', 's1')?.id).toBe('p2');
+    expect(W.resolveWikiLink(ws, 'Inesistente', 's1')).toBeNull();
+
+    ws = W.setPageMeta(ws, 'p1', { searchText: 'Appunti collegati a [[Derivate]] per il ripasso.' });
+    ws = W.setPageMeta(ws, 'p3', { searchText: 'Riferimento incrociato con [[derivate]].' });
+    const backlinks = W.findBacklinks(ws, 'p2');
+    expect(backlinks.map((b) => b.page.id)).toEqual(['p1', 'p3']);
+    expect(backlinks[0].snippet).toContain('[[Derivate]]');
   });
 });
 
@@ -161,6 +212,147 @@ describe('page operations', () => {
     expect(t).toContain('Teorema');
     expect(t).toContain('a^2+b^2=c^2');
     expect(P.isDocEmpty(P.EMPTY_DOC)).toBe(true);
+    expect(P.isDocEmpty({ type: 'doc', content: [{ type: 'paragraph' }, { type: 'paragraph', content: [{ type: 'text', text: '   ' }] }] })).toBe(true);
     expect(P.isDocEmpty(P.textDocFromPlain('ciao'))).toBe(false);
+  });
+
+  it('prunes empty plain text boxes while keeping active or non-empty ones', () => {
+    const p = page([
+      text('empty1', 10, 10),
+      text('empty2', 50, 50),
+      { ...text('filled', 90, 90), doc: P.textDocFromPlain('Contenuto') },
+    ]);
+    const keepActive = P.pruneEmptyTextItems(p, 'empty1');
+    expect(Object.keys(keepActive.items).sort()).toEqual(['empty1', 'filled']);
+    const prunedAll = P.pruneEmptyTextItems(p, null);
+    expect(Object.keys(prunedAll.items)).toEqual(['filled']);
+  });
+
+  describe('NoteContainer image drag & drop transactions', () => {
+    it('moves an imageBlock out of a container to the canvas as a freeImage container', () => {
+      const container: CanvasItem = {
+        id: 'c1',
+        type: 'container',
+        x: 100,
+        y: 100,
+        w: 500,
+        h: 300,
+        doc: {
+          type: 'doc',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Nota con immagine' }] },
+            { type: 'imageBlock', attrs: { assetId: 'img1', width: 400, naturalWidth: 800, naturalHeight: 600 } },
+          ],
+        },
+      };
+      const p = P.emptyPage('p1');
+      const pWithContainer = P.addItems(p, [container]);
+
+      const { page: resultPage, newId } = P.moveImageToCanvas(
+        pWithContainer,
+        'c1',
+        { assetId: 'img1', width: 400, naturalWidth: 800, naturalHeight: 600 },
+        { x: 300, y: 400 },
+      );
+
+      // Source container still exists with only paragraph
+      const updatedSource = resultPage.items.c1 as NoteContainerItem;
+      expect(updatedSource).toBeDefined();
+      expect(P.docToText(updatedSource.doc)).toContain('Nota con immagine');
+      expect(updatedSource.doc.content?.some((n: any) => n.type === 'imageBlock')).toBe(false);
+
+      // New free image container created on canvas
+      const freeImgContainer = resultPage.items[newId] as NoteContainerItem;
+      expect(freeImgContainer).toBeDefined();
+      expect(freeImgContainer.type).toBe('container');
+      expect(freeImgContainer.freeImage).toBe(true);
+      expect(freeImgContainer.doc.content?.[0].type).toBe('imageBlock');
+      expect(freeImgContainer.doc.content?.[0].attrs?.assetId).toBe('img1');
+    });
+
+    it('removes source container when its only block was the image being dragged out', () => {
+      const container: CanvasItem = {
+        id: 'c-only-img',
+        type: 'container',
+        x: 100,
+        y: 100,
+        w: 400,
+        h: 300,
+        doc: {
+          type: 'doc',
+          content: [
+            { type: 'imageBlock', attrs: { assetId: 'img1', width: 400, naturalWidth: 800, naturalHeight: 600 } },
+          ],
+        },
+      };
+      const p = P.addItems(P.emptyPage('p1'), [container]);
+
+      const { page: resultPage, newId } = P.moveImageToCanvas(
+        p,
+        'c-only-img',
+        { assetId: 'img1', width: 400, naturalWidth: 800, naturalHeight: 600 },
+        { x: 500, y: 500 },
+      );
+
+      expect(resultPage.items['c-only-img']).toBeUndefined();
+      expect(resultPage.order).not.toContain('c-only-img');
+      expect(resultPage.items[newId]).toBeDefined();
+    });
+
+    it('moves an imageBlock from canvas into another container at target index', () => {
+      const freeContainer: CanvasItem = {
+        id: 'free1',
+        type: 'container',
+        freeImage: true,
+        x: 100,
+        y: 100,
+        w: 400,
+        h: 300,
+        doc: {
+          type: 'doc',
+          content: [
+            { type: 'imageBlock', attrs: { assetId: 'img2', width: 400, naturalWidth: 800, naturalHeight: 600 } },
+          ],
+        },
+      };
+      const targetContainer: CanvasItem = {
+        id: 'target1',
+        type: 'container',
+        x: 600,
+        y: 100,
+        w: 500,
+        h: 400,
+        doc: {
+          type: 'doc',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Prima riga' }] },
+            { type: 'paragraph', content: [{ type: 'text', text: 'Seconda riga' }] },
+          ],
+        },
+      };
+
+      const p = P.addItems(P.emptyPage('p1'), [freeContainer, targetContainer]);
+
+      // Move into target at index 1 (between first and second paragraph)
+      const resultPage = P.moveImageIntoContainer(
+        p,
+        'free1',
+        'target1',
+        { assetId: 'img2', width: 400, naturalWidth: 800, naturalHeight: 600 },
+        1,
+      );
+
+      // free container is cleaned up
+      expect(resultPage.items.free1).toBeUndefined();
+      expect(resultPage.order).not.toContain('free1');
+
+      // target container now has 3 nodes with imageBlock in the middle
+      const updatedTarget = resultPage.items.target1 as NoteContainerItem;
+      expect(updatedTarget.doc.content?.length).toBe(3);
+      expect(updatedTarget.doc.content?.[0].content?.[0].text).toBe('Prima riga');
+      expect(updatedTarget.doc.content?.[1].type).toBe('imageBlock');
+      expect(updatedTarget.doc.content?.[1].attrs?.assetId).toBe('img2');
+      expect(updatedTarget.doc.content?.[2].content?.[0].text).toBe('Seconda riga');
+    });
   });
 });

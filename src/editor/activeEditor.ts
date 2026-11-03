@@ -21,3 +21,11 @@ export function requestCaretAt(x: number | null, y: number | null) {
   (pendingCaret as { x: number | null; y: number | null }).x = x;
   (pendingCaret as { x: number | null; y: number | null }).y = y;
 }
+
+/** Target node after which caret should be placed on next focus. */
+export const pendingFocusTarget: { afterAssetId: string | null } = { afterAssetId: null };
+
+export function requestFocusAfterAsset(assetId: string | null) {
+  pendingFocusTarget.afterAssetId = assetId;
+}
+

@@ -4,7 +4,7 @@ import { useSettings } from '../store/settings';
 import { useUI, isModalOpen } from '../store/ui';
 import { flush } from '../storage/autosave';
 import { toast } from '../store/ui';
-import { createTextBlock, deleteSelection, duplicateSelection, groupSelection, ungroupSelection, nudgeSelection, reorderSelection, selectAll, toggleLockSelection, finishEditing } from '../canvas/actions';
+import { createTextBlock, deleteSelection, duplicateSelection, groupSelection, ungroupSelection, nudgeSelection, reorderSelection, selectAll, toggleLockSelection, finishEditing, cancelActiveGesture } from '../canvas/actions';
 import { centerContent, fitContent, insertionPoint, resetZoom, zoomAt } from '../canvas/viewport';
 import { TOOL_DEFS } from '../components/ToolPalette';
 
@@ -73,6 +73,28 @@ export function buildShortcuts(): ShortcutDef[] {
       },
     },
     { id: 'new-page', keys: ['mod+alt+n', 'mod+n'], label: 'Nuova pagina', category: 'Pagine e blocchi', scope: 'global', note: '⌘N è riservato da alcuni browser: usa ⌥⌘N', run: newPage },
+    {
+      id: 'template-picker',
+      keys: ['mod+shift+n'],
+      label: 'Nuova pagina da template',
+      category: 'Pagine e blocchi',
+      scope: 'global',
+      run: () => {
+        useUI.getState().set({ templatePickerOpen: true });
+      },
+    },
+    {
+      id: 'page-outline',
+      keys: ['mod+shift+o', 'mod+alt+o'],
+      label: 'Indice dinamico della pagina',
+      category: 'Navigazione',
+      scope: 'global',
+      run: () => {
+        if (!hasPage()) return false;
+        const ui = useUI.getState();
+        ui.set({ outlineOpen: !ui.outlineOpen });
+      },
+    },
     { id: 'sidebar', keys: ['mod+shift+b'], label: 'Mostra/nascondi pannelli di navigazione', category: 'Navigazione', scope: 'global', run: toggleSidebar },
     { id: 'focus-mode', keys: ['mod+alt+f'], label: 'Modalità concentrazione (solo pagina)', category: 'Navigazione', scope: 'global', run: toggleSidebar },
     {
@@ -100,6 +122,7 @@ export function buildShortcuts(): ShortcutDef[] {
       scope: 'canvas',
       inModal: true,
       run: () => {
+        if (cancelActiveGesture && cancelActiveGesture()) return;
         if (closeTopOverlay()) return;
         if (isModalOpen()) return false;
         const s = useStore.getState();
@@ -200,7 +223,12 @@ export function buildShortcuts(): ShortcutDef[] {
       run: () => {
         // Never switch tools while a text block is being edited, even if focus briefly left it.
         if (!hasPage() || useStore.getState().editingId) return false;
-        useStore.getState().setTool(t.tool);
+        const cur = useStore.getState().tool;
+        if (cur === t.tool) {
+          useStore.getState().setTool('select');
+        } else {
+          useStore.getState().setTool(t.tool);
+        }
       },
     });
   }

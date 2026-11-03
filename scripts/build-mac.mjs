@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Builds GlassNotes.app for macOS.
+ * Builds AuraNotes.app for macOS.
  *
- *   npm run app:mac                  → release/GlassNotes-darwin-arm64/GlassNotes.app (Apple Silicon)
+ *   npm run app:mac                  → release/AuraNotes-darwin-arm64/AuraNotes.app (Apple Silicon)
  *   npm run app:mac -- --arch=x64    → Intel Macs
- *   npm run app:mac -- --out=/percorso/cartella   → also copies GlassNotes.app there
+ *   npm run app:mac -- --out=/percorso/cartella   → also copies AuraNotes.app there
  *
  * Works on macOS and on Linux (cross-packaging, unsigned). On a Mac, the app is then
  * ad-hoc signed with `codesign` so macOS accepts it after the bundle is modified.
@@ -30,12 +30,12 @@ const keep = [/^\/package\.json$/, /^\/desktop(\/|$)/, /^\/dist(\/|$)/];
 
 const [appDir] = await packager({
   dir: root,
-  name: 'GlassNotes',
-  executableName: 'GlassNotes',
+  name: 'AuraNotes',
+  executableName: 'AuraNotes',
   platform: 'darwin',
   arch,
   electronVersion: pkg.devDependencies.electron.replace(/^[^\d]*/, ''),
-  appBundleId: 'it.glassnotes.app',
+  appBundleId: 'it.auranotes.app',
   appCategoryType: 'public.app-category.education',
   appVersion: pkg.version,
   icon: path.join(root, 'build', 'icon.icns'),
@@ -47,13 +47,13 @@ const [appDir] = await packager({
   asar: true,
   ignore: (file) => file !== '' && !keep.some((re) => re.test(file)),
   extendInfo: {
-    CFBundleDisplayName: 'GlassNotes',
+    CFBundleDisplayName: 'AuraNotes',
     LSApplicationCategoryType: 'public.app-category.education',
-    NSHumanReadableCopyright: 'GlassNotes',
+    NSHumanReadableCopyright: 'AuraNotes',
   },
 });
 
-const appPath = path.join(appDir, 'GlassNotes.app');
+const appPath = path.join(appDir, 'AuraNotes.app');
 if (process.platform === 'darwin') {
   try {
     execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
@@ -65,8 +65,24 @@ if (process.platform === 'darwin') {
 console.log(`\n✓ Creato ${appPath}`);
 
 if (args.out) {
-  const dest = path.join(path.resolve(args.out), 'GlassNotes.app');
+  const outDir = path.resolve(args.out);
+  const oldDest = path.join(outDir, 'GlassNotes.app');
+  if (fs.existsSync(oldDest)) {
+    try {
+      fs.rmSync(oldDest, { recursive: true, force: true });
+      console.log(`✓ Rimosso vecchio pacchetto ${oldDest}`);
+    } catch (e) {
+      console.warn(`Impossibile rimuovere ${oldDest}:`, e.message);
+    }
+  }
+  const dest = path.join(outDir, 'AuraNotes.app');
   fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(appPath, dest, { recursive: true, verbatimSymlinks: true });
-  console.log(`✓ Copiato in ${dest}`);
+  fs.rmSync(path.join(root, 'release'), { recursive: true, force: true });
+  const userAppsDuplicate = path.join(process.env.HOME || '', 'Applications', 'AuraNotes.app');
+  if (outDir === '/Applications' && fs.existsSync(userAppsDuplicate)) {
+    fs.rmSync(userAppsDuplicate, { recursive: true, force: true });
+    console.log(`✓ Rimosso duplicato ${userAppsDuplicate}`);
+  }
+  console.log(`✓ Copiato in ${dest} (cartella temporanea release/ rimossa per evitare duplicati)`);
 }

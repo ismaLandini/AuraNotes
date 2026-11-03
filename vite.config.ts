@@ -7,7 +7,30 @@ export default defineConfig({
   // Relative asset paths: works from app://glassnotes (GlassNotes.app), file:// and any web server.
   base: './',
   build: {
-    // The app is local-first and loaded once; one larger bundle (editor + syntax highlighting + KaTeX) is expected.
-    chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/pdfjs-dist')) {
+            return 'pdfjs';
+          }
+          if (id.includes('node_modules/katex')) {
+            return 'katex';
+          }
+          if (id.includes('node_modules/lowlight') || id.includes('node_modules/highlight.js')) {
+            return 'syntax-highlight';
+          }
+          if (id.includes('node_modules/@tiptap') || id.includes('node_modules/prosemirror')) {
+            return 'editor-vendor';
+          }
+          if (id.includes('node_modules/lucide-react')) {
+            return 'icons';
+          }
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/zustand')) {
+            return 'react-vendor';
+          }
+        },
+      },
+    },
+    chunkSizeWarningLimit: 800,
   },
 });

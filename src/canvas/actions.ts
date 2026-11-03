@@ -1,6 +1,6 @@
 import type { JSONContent } from '@tiptap/core';
 import { generateJSON } from '@tiptap/core';
-import type { CanvasItem, ID, ImageItem, PageContent, Point, TextItem } from '../types';
+import type { CanvasItem, ID, NoteContainerItem, PageContent, Point, TextItem } from '../types';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { toast } from '../store/ui';
@@ -8,8 +8,13 @@ import * as P from '../model/pageOps';
 import { newId } from '../model/workspaceOps';
 import { dataUrlToBlob, importImageBlob, SUPPORTED_IMAGE_TYPES } from '../storage/assets';
 import { getViewport, insertionPoint, revealRect, screenSize } from './viewport';
+import { PAGE_WIDTH } from '../lib/page';
 import { itemBounds, unionRects } from '../lib/geometry';
 import { sharedExtensions } from '../editor/extensions';
+import { useActiveEditor } from '../editor/activeEditor';
+import { openPdfImportDialog, pickPdfFile } from '../components/PdfImportDialog';
+
+export { pickPdfFile };
 
 const CLIP_MARKER = 'glassnote-clip:';
 
@@ -25,6 +30,11 @@ let internalClip: ClipPayload | null = null;
 /** Snapshot taken just before a text block is created for immediate editing (one undo step). */
 export const editSession: { pendingBefore: PageContent | null } = { pendingBefore: null };
 let pasteCount = 0;
+
+export let cancelActiveGesture: (() => boolean) | null = null;
+export function setCancelActiveGesture(fn: (() => boolean) | null): void {
+  cancelActiveGesture = fn;
+}
 
 function page(): PageContent | null {
   return useStore.getState().currentPage();
@@ -75,7 +85,14 @@ export function nudgeSelection(dx: number, dy: number): void {
     if (it.parentId) {
       const parent = p.items[it.parentId];
       if (parent?.type === 'image') patches[id] = P.translateLocal(it, dx / parent.w, dy / parent.h);
-    } else patches[id] = P.translateItem(it, dx, dy);
+    } else {
+      const patch = P.translateItem(it, dx, dy);
+      if ('x' in patch && typeof patch.x === 'number') {
+        const itemW = 'w' in it && typeof it.w === 'number' ? it.w : 0;
+        patch.x = Math.max(0, Math.min(PAGE_WIDTH - itemW, patch.x));
+      }
+      patches[id] = patch;
+    }
   }
   useStore.getState().updatePage((pg) => P.updateItems(pg, patches));
 }
@@ -124,40 +141,54 @@ export function patchSelection(patch: (it: CanvasItem) => Partial<CanvasItem> | 
 // ---------------------------------------------------------------------------
 // Text blocks
 
-export function createTextBlock(at: Point, opts: { variant?: 'plain' | 'sticky'; doc?: JSONContent; edit?: boolean; w?: number } = {}): ID | null {
+export const MIN_TEXT_WIDTH = 480;
+export const MAX_TEXT_WIDTH = 1850;
+
+export function createTextBlock(at: Point, opts: { variant?: 'plain' | 'sticky'; doc?: JSONContent; edit?: boolean; w?: number; customW?: boolean } = {}): ID | null {
   const s = useStore.getState();
   if (!s.pageId) return null;
+  if (s.editingId) finishEditing(s.editingId);
   const variant = opts.variant ?? 'plain';
-  const item: TextItem = {
+  const customW = opts.customW ?? (opts.w !== undefined);
+  const item: NoteContainerItem = {
     id: newId(),
-    type: 'text',
+    type: 'container',
     x: Math.round(at.x),
     y: Math.round(at.y),
-    w: opts.w ?? (variant === 'sticky' ? 240 : 360),
-    h: 40,
+    w: opts.w ?? (variant === 'sticky' ? 240 : MIN_TEXT_WIDTH),
+    h: 32,
     doc: opts.doc ?? P.EMPTY_DOC,
     variant,
+    ...(customW ? { customW: true } : {}),
     ...(variant === 'sticky' ? { bg: '#fff4b8' } : {}),
   };
   // When editing starts immediately, the edit session records the creation in history.
   if (opts.edit !== false && !editSession.pendingBefore) editSession.pendingBefore = s.currentPage();
-  s.updatePage((p) => P.addItems(p, [item]), opts.edit === false);
+  s.updatePage((p) => P.pruneEmptyTextItems(P.addItems(p, [item]), item.id), opts.edit === false);
   s.setSelection([item.id]);
   if (opts.edit !== false) s.setEditing(item.id);
   return item.id;
 }
 
-/** Called when a text block leaves edit mode: drop it if it is empty. */
+/** Called when a text block leaves edit mode: syncs latest editor state and drops any empty blocks on the page. */
 export function finishEditing(id: ID): void {
   const s = useStore.getState();
-  const p = s.currentPage();
-  const it = p?.items[id];
+  const activeEd = useActiveEditor.getState().editor;
+  const liveDoc =
+    activeEd && !activeEd.isDestroyed && (activeEd.storage as Record<string, unknown>)?.containerId === id
+      ? activeEd.getJSON()
+      : null;
   if (s.editingId === id) s.setEditing(null);
-  if (it?.type === 'text' && P.isDocEmpty(it.doc) && !it.parentId && it.variant === 'plain') {
-    const isConnected = Object.values(p!.items).some((c) => c.type === 'connector' && (c.fromId === id || c.toId === id));
-    if (!isConnected) {
-      s.updatePage((pg) => P.deleteItems(pg, [id]), false);
-      s.setSelection(s.selection.filter((x) => x !== id));
+  const keepId = useStore.getState().editingId;
+  s.updatePage((pg) => {
+    const synced = liveDoc && pg.items[id] ? P.updateItems(pg, { [id]: { doc: liveDoc } }) : pg;
+    return P.pruneEmptyTextItems(synced, keepId);
+  }, false);
+  const after = useStore.getState().currentPage();
+  if (after) {
+    const nextSel = useStore.getState().selection.filter((x) => after.items[x]);
+    if (nextSel.length !== useStore.getState().selection.length) {
+      useStore.getState().setSelection(nextSel);
     }
   }
 }
@@ -165,7 +196,28 @@ export function finishEditing(id: ID): void {
 // ---------------------------------------------------------------------------
 // Images
 
-export async function insertImageFiles(files: Blob[], at?: Point): Promise<number> {
+export function isPdfFile(file: Blob | File): boolean {
+  if (file.type === 'application/pdf' || file.type === 'application/x-pdf') return true;
+  const name = (file as { name?: string }).name;
+  return typeof name === 'string' && /\.pdf$/i.test(name);
+}
+
+export async function insertImageFiles(
+  files: Blob[],
+  at?: Point,
+  dropTarget?: { containerId: ID; insertIndex?: number },
+): Promise<number> {
+  const pdfs = files.filter((f) => isPdfFile(f));
+  if (pdfs.length > 0) {
+    const activeContainerId = dropTarget?.containerId ?? useStore.getState().editingId ?? undefined;
+    openPdfImportDialog(pdfs[0], {
+      at,
+      containerId: activeContainerId,
+      insertIndex: dropTarget?.insertIndex,
+    });
+    return 1;
+  }
+
   const images = files.filter((f) => f.type.startsWith('image/'));
   const unsupported = files.length - images.length;
   if (unsupported > 0) toast(`${unsupported} file ignorati: formato non supportato`, 'error');
@@ -175,11 +227,75 @@ export async function insertImageFiles(files: Blob[], at?: Point): Promise<numbe
     toast('Apri o crea una pagina prima di inserire immagini', 'error');
     return 0;
   }
+
+  // If dropped onto a specific container target on the canvas, insert into that container's document flow
+  if (dropTarget?.containerId) {
+    let idx = dropTarget.insertIndex;
+    let count = 0;
+    for (const file of images) {
+      try {
+        const img = await importImageBlob(file);
+        s.updatePage((p) => {
+          const target = p.items[dropTarget.containerId];
+          if (!target || (target.type !== 'container' && target.type !== 'text')) return p;
+          const nextDoc = P.insertImageBlockIntoDoc(
+            target.doc,
+            {
+              assetId: img.assetId,
+              width: img.width,
+              naturalWidth: img.width,
+              naturalHeight: img.height,
+              mime: img.mime,
+              rotation: 0,
+              indent: 0,
+            },
+            idx,
+            target.w,
+          );
+          if (idx !== undefined) idx++;
+          return P.updateItems(p, { [dropTarget.containerId]: { doc: nextDoc } });
+        });
+        count++;
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Impossibile importare l’immagine', 'error');
+      }
+    }
+    return count;
+  }
+
+  // If an editor is currently active and no canvas point is specified, insert into the editor flow
+  const activeEd = useActiveEditor.getState().editor;
+  if (!at && activeEd && !activeEd.isDestroyed) {
+    const containerW = activeEd.view.dom.clientWidth || 500;
+    const maxWContainer = Math.min(1850, Math.max(100, containerW - 24));
+    let count = 0;
+    for (const file of images) {
+      try {
+        const img = await importImageBlob(file);
+        const scale = Math.min(1, maxWContainer / img.width);
+        const w = Math.max(80, Math.round(img.width * scale));
+        activeEd.chain().focus().setImageBlock({
+          assetId: img.assetId,
+          width: w,
+          naturalWidth: img.width,
+          naturalHeight: img.height,
+          mime: img.mime,
+          rotation: 0,
+          indent: 0,
+        }).run();
+        count++;
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Impossibile importare l’immagine', 'error');
+      }
+    }
+    return count;
+  }
+
   const base = at ?? insertionPoint();
   const vp = getViewport();
   const { w: sw } = screenSize();
   const maxW = Math.min(640, (sw / vp.zoom) * 0.6);
-  const created: ImageItem[] = [];
+  const created: NoteContainerItem[] = [];
   let offset = 0;
   for (const file of images) {
     if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) toast(`Formato ${file.type} potrebbe non essere supportato dal browser`, 'info');
@@ -191,16 +307,31 @@ export async function insertImageFiles(files: Blob[], at?: Point): Promise<numbe
       const h = Math.max(30, Math.round(img.height * scale));
       created.push({
         id: newId(),
-        type: 'image',
+        type: 'container',
         x: Math.round(base.x + offset - (at ? 0 : w / 2)),
         y: Math.round(base.y + offset - (at ? 0 : h / 2)),
         w,
         h,
-        rotation: 0,
-        assetId: img.assetId,
-        naturalWidth: img.width,
-        naturalHeight: img.height,
-        mime: img.mime,
+        freeImage: true,
+        customW: true,
+        variant: 'plain',
+        doc: {
+          type: 'doc',
+          content: [
+            {
+              type: 'imageBlock',
+              attrs: {
+                assetId: img.assetId,
+                width: w,
+                naturalWidth: img.width,
+                naturalHeight: img.height,
+                mime: img.mime,
+                rotation: 0,
+                indent: 0,
+              },
+            },
+          ],
+        },
       });
       offset += 28;
     } catch (e) {
@@ -244,7 +375,7 @@ function buildClip(): ClipPayload | null {
 }
 
 function clipPlainText(c: ClipPayload): string {
-  const texts = c.order.map((id) => c.items[id]).filter((i): i is TextItem => i?.type === 'text').map((t) => P.docToText(t.doc));
+  const texts = c.order.map((id) => c.items[id]).filter((i): i is TextItem | NoteContainerItem => i?.type === 'text' || i?.type === 'container').map((t) => P.docToText(t.doc));
   return texts.join('\n\n');
 }
 
@@ -320,16 +451,35 @@ export function htmlToDoc(html: string): JSONContent | null {
   }
 }
 
-/** Handles a paste event on the canvas: images, GlassNote objects or external text. */
+/** Handles a paste event on the canvas: PDF files, images, GlassNote objects or external text. */
 export async function handlePaste(e: ClipboardEvent): Promise<boolean> {
   const dt = e.clipboardData;
   if (!dt) return false;
   const files: File[] = [];
+  const pdfFiles: File[] = [];
   for (const item of Array.from(dt.items)) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
+    if (item.kind === 'file') {
       const f = item.getAsFile();
-      if (f) files.push(f);
+      if (!f) continue;
+      if (isPdfFile(f)) pdfFiles.push(f);
+      else if (f.type.startsWith('image/')) files.push(f);
     }
+  }
+  if (pdfFiles.length === 0 && dt.files) {
+    for (const f of Array.from(dt.files)) {
+      if (isPdfFile(f)) pdfFiles.push(f);
+    }
+  }
+  if (files.length === 0 && dt.files) {
+    for (const f of Array.from(dt.files)) {
+      if (f.type.startsWith('image/')) files.push(f);
+    }
+  }
+  if (pdfFiles.length > 0) {
+    e.preventDefault();
+    const editingId = useStore.getState().editingId;
+    openPdfImportDialog(pdfFiles[0], editingId ? { containerId: editingId } : undefined);
+    return true;
   }
   const html = dt.getData('text/html');
   const text = dt.getData('text/plain');

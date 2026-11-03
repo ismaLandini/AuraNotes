@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
-import type { ID, Notebook, PageMeta, Section, TrashEntry, Workspace } from '../types';
+import type { ID, Notebook, PageContent, PageMeta, Section, TrashEntry, Workspace } from '../types';
 import { SCHEMA_VERSION } from '../types';
+import { pageSearchText } from './pageOps';
 
 export const PALETTE = ['#5b8def', '#9b6bf2', '#e86aa6', '#f0805a', '#e9b949', '#4fbf8b', '#3fb6c9', '#8a94a6'];
 
@@ -76,6 +77,24 @@ export function setSectionColor(ws: Workspace, id: ID, color: string): Workspace
   return { ...ws, sections: { ...ws.sections, [id]: { ...s, color } } };
 }
 
+export function toggleNotebookStar(ws: Workspace, id: ID): Workspace {
+  const nb = ws.notebooks[id];
+  if (!nb) return ws;
+  return { ...ws, notebooks: { ...ws.notebooks, [id]: { ...nb, starred: !nb.starred } } };
+}
+
+export function toggleSectionStar(ws: Workspace, id: ID): Workspace {
+  const s = ws.sections[id];
+  if (!s) return ws;
+  return { ...ws, sections: { ...ws.sections, [id]: { ...s, starred: !s.starred } } };
+}
+
+export function togglePageStar(ws: Workspace, id: ID): Workspace {
+  const p = ws.pages[id];
+  if (!p) return ws;
+  return { ...ws, pages: { ...ws.pages, [id]: { ...p, starred: !p.starred } } };
+}
+
 function moveInArray<T>(arr: T[], from: number, to: number): T[] {
   const out = arr.slice();
   const [x] = out.splice(from, 1);
@@ -95,6 +114,24 @@ export function reorderSection(ws: Workspace, id: ID, toIndex: number): Workspac
   const nb = ws.notebooks[s.notebookId];
   const from = nb.sectionIds.indexOf(id);
   return { ...ws, notebooks: { ...ws.notebooks, [nb.id]: { ...nb, sectionIds: moveInArray(nb.sectionIds, from, toIndex) } } };
+}
+
+/** Moves a section (with its pages) into another notebook, at the end. No-op within the same notebook. */
+export function moveSection(ws: Workspace, sectionId: ID, toNotebookId: ID): Workspace {
+  const sec = ws.sections[sectionId];
+  const target = ws.notebooks[toNotebookId];
+  if (!sec || !target || sec.notebookId === toNotebookId) return ws;
+  const source = ws.notebooks[sec.notebookId];
+  const now = Date.now();
+  return {
+    ...ws,
+    notebooks: {
+      ...ws.notebooks,
+      [source.id]: { ...source, sectionIds: source.sectionIds.filter((s) => s !== sectionId), updatedAt: now },
+      [target.id]: { ...target, sectionIds: [...target.sectionIds, sectionId], updatedAt: now },
+    },
+    sections: { ...ws.sections, [sectionId]: { ...sec, notebookId: toNotebookId, updatedAt: now } },
+  };
 }
 
 /** Moves a page within its section or into another section (at index, default end). */
@@ -229,3 +266,139 @@ export function findNotebookOfPage(ws: Workspace, pageId: ID): ID | null {
   if (!p) return null;
   return ws.sections[p.sectionId]?.notebookId ?? null;
 }
+
+export function normalizeTag(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^#+/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}_-]/gu, '')
+    .slice(0, 32);
+}
+
+export function addPageTag(ws: Workspace, pageId: ID, rawTag: string): Workspace {
+  const p = ws.pages[pageId];
+  const tag = normalizeTag(rawTag);
+  if (!p || !tag) return ws;
+  const current = p.tags ?? [];
+  if (current.includes(tag)) return ws;
+  return {
+    ...ws,
+    pages: {
+      ...ws.pages,
+      [pageId]: { ...p, tags: [...current, tag], updatedAt: Date.now() },
+    },
+  };
+}
+
+export function removePageTag(ws: Workspace, pageId: ID, rawTag: string): Workspace {
+  const p = ws.pages[pageId];
+  const tag = normalizeTag(rawTag);
+  if (!p || !p.tags || !p.tags.includes(tag)) return ws;
+  const next = p.tags.filter((t) => t !== tag);
+  return {
+    ...ws,
+    pages: {
+      ...ws.pages,
+      [pageId]: { ...p, tags: next.length ? next : undefined, updatedAt: Date.now() },
+    },
+  };
+}
+
+export function allWorkspaceTags(ws: Workspace, sectionId?: ID | null): string[] {
+  const counts = new Map<string, number>();
+  const pageIds = sectionId ? (ws.sections[sectionId]?.pageIds ?? []) : Object.keys(ws.pages);
+  for (const pid of pageIds) {
+    const p = ws.pages[pid];
+    if (!p?.tags) continue;
+    for (const t of p.tags) {
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([t]) => t);
+}
+
+const WIKI_LINK_RE = /\[\[([^[\]\n]+?)\]\]/g;
+
+export function extractWikiLinks(text: string): string[] {
+  if (!text) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of text.matchAll(WIKI_LINK_RE)) {
+    const target = m[1].trim();
+    if (!target) continue;
+    const key = target.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(target);
+    }
+  }
+  return out;
+}
+
+export function resolveWikiLink(ws: Workspace, targetTitle: string, fromSectionId?: ID | null): PageMeta | null {
+  const needle = targetTitle.trim().toLowerCase();
+  if (!needle) return null;
+  const matches = Object.values(ws.pages).filter((p) => (p.title || '').trim().toLowerCase() === needle);
+  if (matches.length === 0) return null;
+  if (fromSectionId) {
+    const sameSec = matches.find((p) => p.sectionId === fromSectionId);
+    if (sameSec) return sameSec;
+    const fromNb = ws.sections[fromSectionId]?.notebookId;
+    if (fromNb) {
+      const sameNb = matches.find((p) => ws.sections[p.sectionId]?.notebookId === fromNb);
+      if (sameNb) return sameNb;
+    }
+  }
+  return matches[0];
+}
+
+export interface BacklinkEntry {
+  page: PageMeta;
+  notebookName: string;
+  sectionName: string;
+  snippet: string;
+}
+
+export function findBacklinks(
+  ws: Workspace,
+  targetPageId: ID,
+  livePages?: Record<ID, PageContent>,
+): BacklinkEntry[] {
+  const target = ws.pages[targetPageId];
+  if (!target) return [];
+  const titleNeedle = (target.title || '').trim().toLowerCase();
+  if (!titleNeedle) return [];
+  const out: BacklinkEntry[] = [];
+  for (const nbId of ws.notebookIds) {
+    const nb = ws.notebooks[nbId];
+    if (!nb) continue;
+    for (const secId of nb.sectionIds) {
+      const sec = ws.sections[secId];
+      if (!sec) continue;
+      for (const pid of sec.pageIds) {
+        if (pid === targetPageId) continue;
+        const p = ws.pages[pid];
+        if (!p) continue;
+        const live = livePages?.[pid];
+        const rawText = live ? pageSearchText(live) : (p.searchText || '');
+        const links = extractWikiLinks(rawText);
+        if (!links.some((l) => l.toLowerCase() === titleNeedle)) continue;
+        let snippet = '';
+        const matchIdx = rawText.toLowerCase().indexOf(`[[${titleNeedle}]]`);
+        if (matchIdx >= 0) {
+          const start = Math.max(0, matchIdx - 28);
+          const end = Math.min(rawText.length, matchIdx + titleNeedle.length + 40);
+          snippet = (start > 0 ? '…' : '') + rawText.slice(start, end).replace(/\s+/g, ' ').trim() + (end < rawText.length ? '…' : '');
+        }
+        out.push({ page: p, notebookName: nb.name, sectionName: sec.name, snippet });
+      }
+    }
+  }
+  return out;
+}
+

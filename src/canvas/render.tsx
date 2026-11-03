@@ -3,6 +3,7 @@ import type { CanvasItem, ConnectorItem, ID, ImageItem, PageContent, Point, Shap
 import { arrowHeadPath, connectorEndpoints, itemBounds, smoothPath } from '../lib/geometry';
 import { useAssetUrl } from '../storage/assets';
 import { StaticRichText } from '../editor/StaticRichText';
+import { MIN_TEXT_WIDTH, MAX_TEXT_WIDTH } from './actions';
 
 type MapFn = (x: number, y: number) => Point;
 const identity: MapFn = (x, y) => ({ x, y });
@@ -71,11 +72,20 @@ export function connectorElement(c: ConnectorItem, from: Point, to: Point, key?:
 
 export const TextView = memo(function TextView({ item, z, editingSlot }: { item: TextItem; z: number; editingSlot?: ReactNode }) {
   const sticky = item.variant === 'sticky';
+  const isCustom = item.customW || sticky || (item as any).freeImage;
   return (
     <div
-      className={`item text-item${sticky ? ' sticky' : ''}${editingSlot ? ' editing' : ''}`}
+      className={`item text-item${sticky ? ' sticky' : ''}${editingSlot ? ' editing' : ''}${!isCustom ? ' auto-width' : ''}`}
       data-id={item.id}
-      style={{ left: item.x, top: item.y, width: item.w, zIndex: z, background: sticky ? item.bg ?? '#fff4b8' : item.bg }}
+      style={{
+        left: item.x,
+        top: item.y,
+        width: isCustom ? item.w : undefined,
+        minWidth: !isCustom ? MIN_TEXT_WIDTH : undefined,
+        maxWidth: !isCustom ? MAX_TEXT_WIDTH : undefined,
+        zIndex: z,
+        background: sticky ? item.bg ?? '#fff4b8' : item.bg,
+      }}
     >
       {editingSlot ?? <StaticRichText doc={item.doc} />}
     </div>
@@ -184,7 +194,8 @@ export function StaticPage({ page }: { page: PageContent }) {
         const z = zFor(it, i);
         switch (it.type) {
           case 'text':
-            return <TextView key={id} item={it} z={z} />;
+          case 'container':
+            return <TextView key={id} item={it as unknown as TextItem} z={z} />;
           case 'image':
             return <ImageView key={id} item={it} z={z} annotations={children.get(id) ?? EMPTY_ARR} renderChildText={(t) => childText(t)} />;
           case 'stroke':

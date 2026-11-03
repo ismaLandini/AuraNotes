@@ -1,0 +1,71 @@
+%PDF-1.6
+%
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2384 3370] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 406 >>
+stream
+q
+1 1 1 rg
+0 0 2384 3370 re f
+0.15 0.38 0.85 rg
+36 3286 2312 38 re f
+0.2 0.25 0.35 RG
+2 w
+48 80 m
+2336 80 l
+S
+60 65 m
+60 260 l
+S
+0.15 0.38 0.85 RG
+2.5 w
+60 90 m
+140 210 220 210 300 95 c
+S
+BT
+/F1 16 Tf
+1 1 1 rg
+48 3300 Td
+(Poster Scientifico Formato A0 \(841 x 1189 mm\)) Tj
+ET
+BT
+/F2 13 Tf
+0.1 0.1 0.12 rg
+48 3245 Td
+(R_{mu nu} - \(1/2\) R g_{mu nu} + Lambda g_{mu nu} = \(8 pi G / c^4\) T_{mu nu}) Tj
+ET
+Q
+endstream
+endobj
+7 0 obj
+<< /Title (Poster A0) >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000019 00000 n 
+0000000068 00000 n 
+0000000125 00000 n 
+0000000222 00000 n 
+0000000317 00000 n 
+0000000455 00000 n 
+0000000912 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 7 0 R /ID [<41484f565d646b727980878e959ca3aa> <41484f565d646b727980878e959ca3aa>] >>
+startxref
+952
+%%EOF

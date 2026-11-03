@@ -2,7 +2,7 @@ import type { JSONContent } from '@tiptap/core';
 
 export type ID = string;
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 export interface Notebook {
   id: ID;
@@ -11,6 +11,7 @@ export interface Notebook {
   sectionIds: ID[];
   createdAt: number;
   updatedAt: number;
+  starred?: boolean;
 }
 
 export interface Section {
@@ -21,6 +22,7 @@ export interface Section {
   pageIds: ID[];
   createdAt: number;
   updatedAt: number;
+  starred?: boolean;
 }
 
 export interface PageMeta {
@@ -31,6 +33,9 @@ export interface PageMeta {
   updatedAt: number;
   /** Plain text of all text blocks, used for global search. */
   searchText: string;
+  /** Optional normalised tags (e.g. ['esame', 'importante']). */
+  tags?: string[];
+  starred?: boolean;
 }
 
 export interface TrashEntry {
@@ -75,6 +80,49 @@ interface BaseItem {
   groupId?: ID;
 }
 
+export interface PdfSourceAttr {
+  type: 'pdf';
+  assetId: ID;
+  page: number;
+}
+
+export interface ImageBlockAttrs {
+  id?: ID;
+  assetId: ID;
+  width: number;
+  naturalWidth: number;
+  naturalHeight: number;
+  mime?: string;
+  rotation?: number;
+  indent?: number; // 0..8
+  alt?: string;
+  annotations?: CanvasItem[];
+  source?: PdfSourceAttr | null;
+}
+
+/**
+ * Top-level Note Container (OneNote-style container).
+ * Holds a unified TipTap document where paragraphs, headings, tables,
+ * math, and image blocks live in a single continuous flow.
+ */
+export interface NoteContainerItem extends BaseItem {
+  type: 'container';
+  x: number;
+  y: number;
+  w: number;
+  /** Last measured rendered height (kept in sync, not part of undo history semantics). */
+  h: number;
+  doc: JSONContent;
+  variant?: 'plain' | 'sticky';
+  bg?: string;
+  /** Whether the width was manually chosen by the user via resizing (so auto-width does not override it). */
+  customW?: boolean;
+  /** When true, this container is a free-standing image on the canvas. */
+  freeImage?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export interface TextItem extends BaseItem {
   type: 'text';
   x: number;
@@ -85,6 +133,8 @@ export interface TextItem extends BaseItem {
   doc: JSONContent;
   variant: 'plain' | 'sticky';
   bg?: string;
+  /** Whether the width was manually chosen by the user via resizing (so auto-width does not override it). */
+  customW?: boolean;
 }
 
 export interface ImageItem extends BaseItem {
@@ -136,7 +186,7 @@ export interface ConnectorItem extends BaseItem {
   layer: 'back' | 'front';
 }
 
-export type CanvasItem = TextItem | ImageItem | StrokeItem | ShapeItem | ConnectorItem;
+export type CanvasItem = NoteContainerItem | TextItem | ImageItem | StrokeItem | ShapeItem | ConnectorItem;
 export type ItemType = CanvasItem['type'];
 
 export interface PageBackground {

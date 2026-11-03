@@ -4,6 +4,7 @@ import { flush } from '../storage/autosave';
 import { loadPage, loadWorkspace } from '../storage/db';
 import * as P from '../model/pageOps';
 import type { TextItem } from '../types';
+import { createTextBlock } from '../canvas/actions';
 
 beforeAll(async () => {
   localStorage.clear();
@@ -82,5 +83,12 @@ describe('store', () => {
     expect(await useStore.getState().restorePage(pid)).toBe(true);
     expect(useStore.getState().workspace.pages[pid]).toBeTruthy();
     await useStore.getState().emptyTrash();
+  });
+
+  it('creates text blocks with the 4x conventional width (480px)', () => {
+    const id = createTextBlock({ x: 50, y: 50 });
+    expect(id).toBeTruthy();
+    const item = useStore.getState().currentPage()!.items[id!] as TextItem;
+    expect(item.w).toBe(480);
   });
 });

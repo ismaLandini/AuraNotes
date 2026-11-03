@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { Hash, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useUI } from '../store/ui';
 import { renderLatex } from '../editor/extensions';
 import { useStore } from '../store/useStore';
@@ -8,6 +8,7 @@ import { formatCombo, listShortcuts, onRegistryChange, type ShortcutDef } from '
 import type { ID } from '../types';
 import { itemBounds } from '../lib/geometry';
 import { docToText } from '../model/pageOps';
+import * as W from '../model/workspaceOps';
 import { revealRect } from '../canvas/viewport';
 
 export function Modal({ title, onClose, children, wide, footer, testid }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; footer?: ReactNode; testid?: string }) {
@@ -100,9 +101,12 @@ function MathPreview({ latex, display }: { latex: string; display: boolean }) {
 
 export function PromptDialog() {
   const req = useUI((s) => s.prompt);
-  const [value, setValue] = useState('');
-  useEffect(() => setValue(req?.initial ?? ''), [req]);
   if (!req) return null;
+  return <PromptDialogInner key={req.title} req={req} />;
+}
+
+function PromptDialogInner({ req }: { req: NonNullable<ReturnType<typeof useUI.getState>['prompt']> }) {
+  const [value, setValue] = useState(req.initial ?? '');
   const submit = () => req.resolve(value);
   return (
     <Modal
@@ -177,13 +181,14 @@ const CATEGORY_ORDER = ['Navigazione', 'Pagine e blocchi', 'Formattazione testo'
 
 export function ShortcutsOverlay() {
   const open = useUI((s) => s.shortcutsOpen);
-  const [q, setQ] = useState('');
-  const [defs, setDefs] = useState<ShortcutDef[]>(listShortcuts());
-  useEffect(() => onRegistryChange(() => setDefs(listShortcuts())), []);
-  useEffect(() => {
-    if (open) setDefs(listShortcuts());
-  }, [open]);
   if (!open) return null;
+  return <ShortcutsOverlayInner />;
+}
+
+function ShortcutsOverlayInner() {
+  const [q, setQ] = useState('');
+  const [defs, setDefs] = useState<ShortcutDef[]>(listShortcuts);
+  useEffect(() => onRegistryChange(() => setDefs(listShortcuts())), []);
   const query = q.trim().toLowerCase();
   const filtered = defs.filter((d) => !query || d.label.toLowerCase().includes(query) || d.keys.some((k) => formatCombo(k).toLowerCase().includes(query)) || d.category.toLowerCase().includes(query));
   const groups = CATEGORY_ORDER.map((c) => ({ c, items: filtered.filter((d) => d.category === c) })).filter((g) => g.items.length);
@@ -228,6 +233,7 @@ interface Result {
   title: string;
   context: string;
   snippet?: string;
+  tags?: string[];
   matchStart?: number;
 }
 
@@ -244,34 +250,47 @@ function highlight(text: string, q: string): ReactNode {
   );
 }
 
-export function searchWorkspace(ws: ReturnType<typeof useStore.getState>['workspace'], query: string): Result[] {
+export function searchWorkspace(
+  ws: ReturnType<typeof useStore.getState>['workspace'],
+  query: string,
+  tagFilter?: string | null,
+): Result[] {
   const q = query.trim().toLowerCase();
-  if (!q) return [];
+  const tagNeedle = tagFilter ? W.normalizeTag(tagFilter) : '';
+  if (!q && !tagNeedle) return [];
+  const qTag = q.startsWith('#') ? W.normalizeTag(q) : q;
   const out: Result[] = [];
   for (const nid of ws.notebookIds) {
     const nb = ws.notebooks[nid];
-    if (nb.name.toLowerCase().includes(q)) out.push({ kind: 'notebook', id: nid, title: nb.name, context: 'Blocco appunti' });
+    if (!tagNeedle && q && nb.name.toLowerCase().includes(q)) {
+      out.push({ kind: 'notebook', id: nid, title: nb.name, context: 'Quaderno' });
+    }
     for (const sid of nb.sectionIds) {
       const s = ws.sections[sid];
-      if (s.name.toLowerCase().includes(q)) out.push({ kind: 'section', id: sid, title: s.name, context: nb.name });
+      if (!tagNeedle && q && s.name.toLowerCase().includes(q)) {
+        out.push({ kind: 'section', id: sid, title: s.name, context: nb.name });
+      }
       for (const pid of s.pageIds) {
         const p = ws.pages[pid];
-        const inTitle = p.title.toLowerCase().includes(q);
-        const idx = p.searchText.toLowerCase().indexOf(q);
-        if (inTitle || idx >= 0) {
+        if (!p) continue;
+        if (tagNeedle && !p.tags?.includes(tagNeedle)) continue;
+        const inTitle = q ? p.title.toLowerCase().includes(q) : false;
+        const idx = q ? p.searchText.toLowerCase().indexOf(q) : -1;
+        const inTags = qTag ? (p.tags?.some((t) => t.includes(qTag)) ?? false) : false;
+        if (!q || inTitle || idx >= 0 || inTags) {
           let snippet: string | undefined;
-          if (idx >= 0) {
+          if (idx >= 0 && q) {
             const start = Math.max(0, idx - 40);
             snippet = (start > 0 ? '…' : '') + p.searchText.slice(start, idx + q.length + 60).replace(/\s+/g, ' ') + '…';
           }
-          out.push({ kind: 'page', id: pid, title: p.title, context: `${nb.name} › ${s.name}`, snippet });
+          out.push({ kind: 'page', id: pid, title: p.title, context: `${nb.name} › ${s.name}`, snippet, tags: p.tags });
         }
       }
     }
   }
   // Pages matching the title first, then content matches.
   return out.sort((a, b) => {
-    const rank = (r: Result) => (r.kind === 'page' ? (r.title.toLowerCase().includes(q) ? 0 : 1) : 2);
+    const rank = (r: Result) => (r.kind === 'page' ? (q && r.title.toLowerCase().includes(q) ? 0 : 1) : 2);
     return rank(a) - rank(b);
   });
 }
@@ -281,9 +300,10 @@ async function locateInPage(pageId: ID, query: string) {
   const st = useStore.getState();
   const page = await st.ensurePageLoaded(pageId);
   const q = query.toLowerCase();
+  if (!q) return;
   for (const id of page.order) {
     const it = page.items[id];
-    if (it?.type === 'text' && docToText(it.doc).toLowerCase().includes(q)) {
+    if ((it?.type === 'text' || it?.type === 'container') && docToText(it.doc).toLowerCase().includes(q)) {
       useStore.getState().setSelection([id]);
       requestAnimationFrame(() => revealRect(itemBounds(it, page.items)));
       return;
@@ -293,12 +313,17 @@ async function locateInPage(pageId: ID, query: string) {
 
 export function SearchDialog() {
   const open = useUI((s) => s.searchOpen);
+  if (!open) return null;
+  return <SearchDialogInner />;
+}
+
+function SearchDialogInner() {
   const ws = useStore((s) => s.workspace);
   const [q, setQ] = useState('');
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [active, setActive] = useState(0);
-  const results = useMemo(() => searchWorkspace(ws, q).slice(0, 60), [ws, q]);
-  useEffect(() => setActive(0), [q]);
-  if (!open) return null;
+  const allTags = useMemo(() => W.allWorkspaceTags(ws), [ws]);
+  const results = useMemo(() => searchWorkspace(ws, q, tagFilter).slice(0, 60), [ws, q, tagFilter]);
   const close = () => useUI.getState().set({ searchOpen: false });
   const go = (r: Result) => {
     close();
@@ -308,15 +333,19 @@ export function SearchDialog() {
     else void st.openPage(r.id).then(() => locateInPage(r.id, q.trim()));
   };
   const query = q.trim().toLowerCase();
+  const safeActive = Math.min(active, Math.max(0, results.length - 1));
   return (
     <Modal title="Cerca" onClose={close} wide testid="search-dialog">
       <div className="search-field big">
         <Search size={17} />
         <input
           autoFocus
-          placeholder="Cerca in blocchi, sezioni, titoli e testo delle pagine…"
+          placeholder="Cerca in quaderni, sezioni, titoli, testo o #tag…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setActive(0);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault();
@@ -324,25 +353,55 @@ export function SearchDialog() {
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
               setActive((a) => Math.max(0, a - 1));
-            } else if (e.key === 'Enter' && results[active]) go(results[active]);
+            } else if (e.key === 'Enter' && results[safeActive]) go(results[safeActive]);
           }}
           aria-label="Testo da cercare"
           data-testid="search-input"
         />
       </div>
+      {allTags.length > 0 && (
+        <div className="search-tag-filter" data-testid="search-tag-filter" role="group" aria-label="Filtra per tag">
+          {allTags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`sidebar-tag-chip${tagFilter === t ? ' active' : ''}`}
+              data-testid={`search-filter-tag-${t}`}
+              onClick={() => {
+                setTagFilter((cur) => (cur === t ? null : t));
+                setActive(0);
+              }}
+            >
+              <Hash size={11} />
+              <span>{t}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <ul className="search-results" role="listbox">
         {results.map((r, i) => (
-          <li key={`${r.kind}-${r.id}`} role="option" aria-selected={i === active} className={i === active ? 'active' : ''} onMouseEnter={() => setActive(i)} onClick={() => go(r)}>
-            <span className={`res-kind ${r.kind}`}>{r.kind === 'page' ? 'Pagina' : r.kind === 'section' ? 'Sezione' : 'Blocco'}</span>
+          <li key={`${r.kind}-${r.id}`} role="option" aria-selected={i === safeActive} className={i === safeActive ? 'active' : ''} onMouseEnter={() => setActive(i)} onClick={() => go(r)}>
+            <span className={`res-kind ${r.kind}`}>{r.kind === 'page' ? 'Pagina' : r.kind === 'section' ? 'Sezione' : 'Quaderno'}</span>
             <div className="res-main">
-              <div className="res-title">{highlight(r.title, query)}</div>
+              <div className="res-title">
+                {highlight(r.title, query)}
+                {r.tags && r.tags.length > 0 && (
+                  <span className="res-tags">
+                    {r.tags.map((t) => (
+                      <span key={t} className="page-nav-tag">
+                        #{t}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </div>
               <div className="res-ctx">{r.context}</div>
               {r.snippet && <div className="res-snippet">{highlight(r.snippet, query)}</div>}
             </div>
           </li>
         ))}
-        {query && results.length === 0 && <li className="empty">Nessun risultato per “{q}”.</li>}
-        {!query && <li className="empty">Digita per cercare. Il testo nelle immagini e la scrittura a mano non sono indicizzati.</li>}
+        {(query || tagFilter) && results.length === 0 && <li className="empty">Nessun risultato{q ? ` per “${q}”` : ''}.</li>}
+        {!query && !tagFilter && <li className="empty">Digita per cercare o seleziona un tag. Il testo nelle immagini e la scrittura a mano non sono indicizzati.</li>}
       </ul>
     </Modal>
   );

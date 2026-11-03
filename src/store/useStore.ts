@@ -3,8 +3,11 @@ import type { CanvasItem, ID, PageContent, Tool, Viewport, Workspace } from '../
 import * as W from '../model/workspaceOps';
 import * as P from '../model/pageOps';
 import { buildExampleWorkspace } from '../model/example';
+import { type AcademicTemplateId, createTemplatePage, getTemplate } from '../model/templates';
 import { constrainChanged } from '../lib/page';
 import { deleteAssets, deletePages, listAssetIds, loadAllPages, loadPage, loadWorkspace } from '../storage/db';
+import { revokeAssetUrl } from '../storage/assets';
+import { useUI } from './ui';
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error';
 
@@ -48,19 +51,22 @@ export interface AppState {
 
   selectNotebook: (id: ID) => void;
   selectSection: (id: ID) => void;
-  openPage: (id: ID) => Promise<void>;
+  openPage: (id: ID, opts?: { keepHome?: boolean }) => Promise<void>;
   ensurePageLoaded: (id: ID) => Promise<PageContent>;
 
   addNotebook: (name: string) => ID;
   addSection: (notebookId: ID, name: string) => ID;
-  addPage: (sectionId?: ID, title?: string) => ID | null;
+  createNotebookInHome: (name: string) => ID;
+  createSectionInHome: (notebookId: ID, name: string) => ID;
+  addPage: (sectionId?: ID, title?: string, templateId?: AcademicTemplateId) => ID | null;
   duplicatePage: (id: ID) => Promise<ID | null>;
+  navigateWikiLink: (targetTitle: string) => Promise<ID | null>;
   deletePage: (id: ID) => void;
   deleteSection: (id: ID) => void;
   deleteNotebook: (id: ID) => void;
   restorePage: (id: ID) => Promise<boolean>;
   emptyTrash: (ids?: ID[]) => Promise<void>;
-  garbageCollectAssets: () => Promise<number>;
+  garbageCollectAssets: (excludeFuture?: boolean) => Promise<number>;
 
   // page content
   currentPage: () => PageContent | null;
@@ -141,7 +147,7 @@ export const useStore = create<AppState>((set, get) => ({
         loaded: true,
         dirtyTick: s.dirtyTick + (dirty.ws ? 1 : 0),
       }));
-      if (pageId) await get().openPage(pageId);
+      if (pageId) await get().openPage(pageId, { keepHome: true });
       // Asset GC is safe at startup because no undo history references removed images.
       void get().garbageCollectAssets().catch(() => undefined);
     } catch (e) {
@@ -167,6 +173,7 @@ export const useStore = create<AppState>((set, get) => ({
     const ws = get().workspace;
     const nb = ws.notebooks[id];
     if (!nb) return;
+    get().setEditing(null);
     const sectionId = nb.sectionIds[0] ?? null;
     set({ notebookId: id, sectionId, selection: [], editingId: null });
     const pid = sectionId ? ws.sections[sectionId].pageIds[0] : undefined;
@@ -178,16 +185,20 @@ export const useStore = create<AppState>((set, get) => ({
     const ws = get().workspace;
     const sec = ws.sections[id];
     if (!sec) return;
+    get().setEditing(null);
     set({ sectionId: id, notebookId: sec.notebookId, selection: [], editingId: null });
-    const pid = sec.pageIds[0];
+    useUI.getState().set({ homeOpen: false });
+    const pid = sec.pageIds[sec.pageIds.length - 1];
     if (pid) void get().openPage(pid);
-    else set({ pageId: null });
+    else get().addPage(id);
   },
 
   ensurePageLoaded: async (id) => {
     const existing = get().pages[id];
     if (existing) return existing;
-    const loadedPage = (await loadPage(id)) ?? P.emptyPage(id);
+    const rawLoaded = (await loadPage(id)) ?? P.emptyPage(id);
+    const loadedPage = P.pruneEmptyTextItems(rawLoaded, null);
+    if (loadedPage !== rawLoaded) get().markDirty(id);
     // Another call may have loaded it meanwhile.
     const again = get().pages[id];
     if (again) return again;
@@ -195,12 +206,16 @@ export const useStore = create<AppState>((set, get) => ({
     return loadedPage;
   },
 
-  openPage: async (id) => {
+  openPage: async (id, opts) => {
     const ws = get().workspace;
     const meta = ws.pages[id];
     if (!meta) return;
+    get().setEditing(null);
     const sec = ws.sections[meta.sectionId];
     set({ pageId: id, sectionId: sec.id, notebookId: sec.notebookId, selection: [], editingId: null });
+    if (!opts?.keepHome) {
+      useUI.getState().set({ homeOpen: false });
+    }
     rememberPage(id);
     await get().ensurePageLoaded(id);
   },
@@ -226,12 +241,32 @@ export const useStore = create<AppState>((set, get) => ({
     return sid;
   },
 
-  addPage: (sectionId, title = 'Pagina senza titolo') => {
+  createNotebookInHome: (name) => {
+    const id = W.newId();
+    const sid = W.newId();
+    get().mutateWorkspace((ws) => W.createSection(W.createNotebook(ws, name, id), id, 'Nuova sezione', sid));
+    return id;
+  },
+
+  createSectionInHome: (notebookId, name) => {
+    const sid = W.newId();
+    get().mutateWorkspace((ws) => W.createSection(ws, notebookId, name, sid));
+    return sid;
+  },
+
+  addPage: (sectionId, title = 'Pagina senza titolo', templateId?: AcademicTemplateId) => {
     const sid = sectionId ?? get().sectionId;
     if (!sid || !get().workspace.sections[sid]) return null;
     const pid = W.newId();
-    get().mutateWorkspace((ws) => W.createPage(ws, sid, title, pid));
-    set((s) => ({ pages: { ...s.pages, [pid]: P.emptyPage(pid) }, focusTitleFor: pid }));
+    const template = templateId ? getTemplate(templateId) : undefined;
+    const actualTitle = template ? template.defaultTitle : title;
+    const pageContent = template ? createTemplatePage(pid, templateId!) : P.emptyPage(pid);
+    get().mutateWorkspace((ws) =>
+      W.setPageMeta(W.createPage(ws, sid, actualTitle, pid), pid, {
+        searchText: template ? P.pageSearchText(pageContent) : '',
+      }),
+    );
+    set((s) => ({ pages: { ...s.pages, [pid]: pageContent }, focusTitleFor: pid }));
     get().markDirty(pid);
     void get().openPage(pid);
     return pid;
@@ -245,12 +280,31 @@ export const useStore = create<AppState>((set, get) => ({
     const { items } = P.cloneItems(src.items, src.order, src.order, 0, 0);
     const pid = W.newId();
     const idx = ws.sections[meta.sectionId].pageIds.indexOf(id) + 1;
-    get().mutateWorkspace((w) => W.setPageMeta(W.createPage(w, meta.sectionId, `${meta.title} (copia)`, pid, idx), pid, { searchText: meta.searchText }));
+    get().mutateWorkspace((w) =>
+      W.setPageMeta(W.createPage(w, meta.sectionId, `${meta.title} (copia)`, pid, idx), pid, {
+        searchText: meta.searchText,
+        tags: meta.tags ? [...meta.tags] : undefined,
+      }),
+    );
     const copy: PageContent = { ...P.addItems(P.emptyPage(pid), items), background: src.background };
     set((s) => ({ pages: { ...s.pages, [pid]: copy } }));
     get().markDirty(pid);
     await get().openPage(pid);
     return pid;
+  },
+
+  navigateWikiLink: async (targetTitle) => {
+    const clean = targetTitle.trim();
+    if (!clean) return null;
+    const ws = get().workspace;
+    const found = W.resolveWikiLink(ws, clean, get().sectionId);
+    if (found) {
+      await get().openPage(found.id);
+      return found.id;
+    }
+    const sid = get().sectionId ?? firstSection(ws);
+    if (!sid) return null;
+    return get().addPage(sid, clean);
   },
 
   deletePage: (id) => {
@@ -320,7 +374,7 @@ export const useStore = create<AppState>((set, get) => ({
     await get().garbageCollectAssets();
   },
 
-  garbageCollectAssets: async () => {
+  garbageCollectAssets: async (excludeFuture = false) => {
     const all = await loadAllPages();
     const referenced = new Set<ID>();
     const memPages = get().pages;
@@ -331,11 +385,15 @@ export const useStore = create<AppState>((set, get) => ({
     }
     // Pages in history (undo) may reference assets too.
     for (const h of Object.values(get().history)) {
-      for (const p of [...h.past, ...h.future]) for (const a of P.referencedAssets(p)) referenced.add(a);
+      const histPages = excludeFuture ? h.past : [...h.past, ...h.future];
+      for (const p of histPages) for (const a of P.referencedAssets(p)) referenced.add(a);
     }
     const stored = await listAssetIds();
     const orphan = stored.filter((a) => !referenced.has(a));
-    if (orphan.length) await deleteAssets(orphan);
+    if (orphan.length) {
+      for (const id of orphan) revokeAssetUrl(id);
+      await deleteAssets(orphan);
+    }
     return orphan.length;
   },
 
@@ -368,10 +426,30 @@ export const useStore = create<AppState>((set, get) => ({
     if (!id || before.id !== id) return;
     const cur = get().pages[id];
     if (!cur || cur === before) return;
+    const searchText = P.pageSearchText(cur);
+    const now = Date.now();
     set((s) => {
       const h = s.history[id] ?? { past: [], future: [] };
-      return { history: { ...s.history, [id]: { past: [...h.past, before].slice(-HISTORY_LIMIT), future: [] } } };
+      let ws = s.workspace;
+      if (ws.pages[id]) {
+        const secId = ws.pages[id].sectionId;
+        const sec = ws.sections[secId];
+        const nb = sec ? ws.notebooks[sec.notebookId] : undefined;
+        ws = W.setPageMeta(ws, id, { searchText, updatedAt: now });
+        if (sec) {
+          ws = {
+            ...ws,
+            sections: { ...ws.sections, [secId]: { ...sec, updatedAt: now } },
+            notebooks: nb ? { ...ws.notebooks, [nb.id]: { ...nb, updatedAt: now } } : ws.notebooks,
+          };
+        }
+      }
+      return {
+        workspace: ws,
+        history: { ...s.history, [id]: { past: [...h.past, before].slice(-HISTORY_LIMIT), future: [] } },
+      };
     });
+    dirty.ws = true;
   },
 
   undo: () => {
@@ -388,6 +466,7 @@ export const useStore = create<AppState>((set, get) => ({
       editingId: null,
     }));
     get().markDirty(id);
+    void get().garbageCollectAssets(true);
     return true;
   },
 
@@ -418,7 +497,23 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setSelection: (ids) => set({ selection: ids }),
-  setEditing: (id) => set({ editingId: id }),
+  setEditing: (id) => {
+    const pid = get().pageId;
+    const cur = pid ? get().pages[pid] : null;
+    if (cur && pid) {
+      const pruned = P.pruneEmptyTextItems(cur, id);
+      if (pruned !== cur) {
+        set((s) => ({
+          editingId: id,
+          pages: { ...s.pages, [pid]: pruned },
+          selection: s.selection.filter((sid) => pruned.items[sid]),
+        }));
+        get().markDirty(pid);
+        return;
+      }
+    }
+    set({ editingId: id });
+  },
   // Leaving an active text block when switching tools is handled by the canvas (finishEditing).
   setTool: (t) => set({ tool: t, selection: t === 'select' ? get().selection : [] }),
   setViewport: (pageId, v) => set((s) => ({ viewports: { ...s.viewports, [pageId]: v } })),

@@ -9,6 +9,7 @@ import { BackupValidationError, backupToAssets, buildBackup, downloadBlob, merge
 import { putAsset, replaceAll, requestPersistence, saveAll, storageEstimate } from '../storage/db';
 import { flush } from '../storage/autosave';
 import type { BackgroundPattern, PaperColor } from '../types';
+import type { PdfLosslessFormat, PdfQualityPreset } from '../pdf/types';
 import { formatCombo } from '../shortcuts/registry';
 import { desktop } from '../desktop';
 
@@ -25,7 +26,7 @@ export async function exportBackup() {
   const b = await buildBackup(st.workspace, st.pages);
   const blob = new Blob([JSON.stringify(b)], { type: 'application/json' });
   const date = new Date().toISOString().slice(0, 10);
-  downloadBlob(blob, `glassnote-backup-${date}.json`);
+  downloadBlob(blob, `auranotes-backup-${date}.json`);
   toast(`Backup esportato (${fmtBytes(blob.size)})`, 'success');
 }
 
@@ -47,7 +48,7 @@ export async function importBackupFile(file: File) {
   const nbCount = backup.workspace.notebookIds.length;
   const choice = await askConfirm({
     title: 'Importa backup',
-    message: `Il backup contiene ${nbCount} blocchi appunti e ${backup.pages.length} pagine. Puoi aggiungerli ai tuoi blocchi attuali (unisci) oppure sostituire tutti i dati attuali.`,
+    message: `Il backup contiene ${nbCount} quaderni e ${backup.pages.length} pagine. Puoi aggiungerli ai tuoi quaderni attuali (unisci) oppure sostituire tutti i dati attuali.`,
     confirmLabel: 'Unisci',
     altLabel: 'Sostituisci tutto…',
   });
@@ -59,9 +60,9 @@ export async function importBackupFile(file: File) {
       await saveAll(null, remapped.pages);
       useStore.getState().mutateWorkspace((ws) => mergeWorkspaces(ws, remapped.workspace));
       await flush();
-      toast(`Importati ${remapped.workspace.notebookIds.length} blocchi appunti`, 'success');
+      toast(`Importati ${remapped.workspace.notebookIds.length} quaderni`, 'success');
     } else {
-      const sure = await confirmDanger('Sostituire tutti i dati?', 'Tutti i blocchi appunti, le pagine e le immagini attuali verranno eliminati e sostituiti dal backup. Ti consigliamo di esportare prima un backup dei dati attuali.', 'Sostituisci');
+      const sure = await confirmDanger('Sostituire tutti i dati?', 'Tutti i quaderni, le pagine e le immagini attuali verranno eliminati e sostituiti dal backup. Ti consigliamo di esportare prima un backup dei dati attuali.', 'Sostituisci');
       if (!sure) return;
       await replaceAll({ ...backup.workspace, trash: backup.workspace.trash ?? [] }, backup.pages, backupToAssets(backup));
       dirty.ws = false;
@@ -186,7 +187,7 @@ export function SettingsDialog() {
           </label>
           <label className="row check">
             <input type="checkbox" checked={s.layout.notebooksVisible} onChange={(e) => s.setLayout({ notebooksVisible: e.target.checked })} />
-            <span>Pannello blocchi appunti</span>
+            <span>Pannello quaderni</span>
           </label>
           <label className="row check">
             <input type="checkbox" checked={s.layout.sectionsVisible} onChange={(e) => s.setLayout({ sectionsVisible: e.target.checked })} />
@@ -208,6 +209,21 @@ export function SettingsDialog() {
               <option value={4000}>4 s</option>
             </select>
           </label>
+          <label className="row">
+            <span>Qualità predefinita importazione PDF</span>
+            <select value={s.pdfQuality} onChange={(e) => s.set({ pdfQuality: e.target.value as PdfQualityPreset })} data-testid="settings-pdf-quality">
+              <option value="standard">Standard (150 DPI)</option>
+              <option value="high">Alta (220 DPI, min 2000 px)</option>
+              <option value="maximum">Massima (300 DPI)</option>
+            </select>
+          </label>
+          <label className="row">
+            <span>Formato immagini pagine PDF</span>
+            <select value={s.pdfFormat} onChange={(e) => s.set({ pdfFormat: e.target.value as PdfLosslessFormat })} data-testid="settings-pdf-format">
+              <option value="png">PNG senza perdita (predefinito)</option>
+              <option value="webp">WebP senza perdita (compatta)</option>
+            </select>
+          </label>
           <button className="btn sm" onClick={() => (close(), useUI.getState().set({ shortcutsOpen: true }))}>
             Scorciatoie da tastiera…
           </button>
@@ -217,7 +233,7 @@ export function SettingsDialog() {
           <h3>Dati e backup</h3>
           <p className="hint">
             {desktop()
-              ? 'Le note sono salvate sul Mac in ~/Library/Application Support/GlassNotes; l’app crea anche backup automatici (ultimi 20). Per portare appunti dalla versione browser usa “Importa backup”.'
+              ? 'Le note sono salvate sul Mac in ~/Library/Application Support/AuraNotes; l’app crea anche backup automatici (ultimi 20). Per portare appunti dalla versione browser usa “Importa backup”.'
               : 'Le note sono salvate solo in questo browser (IndexedDB). Svuotare i dati del sito le elimina: esporta regolarmente un backup.'}
           </p>
           <div className="btn-row">

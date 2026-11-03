@@ -1,0 +1,153 @@
+%PDF-1.6
+%
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 720 405] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 372 >>
+stream
+q
+1 1 1 rg
+0 0 720 405 re f
+0.12 0.35 0.78 rg
+36 321 648 38 re f
+0.2 0.25 0.35 RG
+2 w
+48 80 m
+672 80 l
+S
+60 65 m
+60 260 l
+S
+0.12 0.35 0.78 RG
+2.5 w
+60 90 m
+140 210 220 210 300 95 c
+S
+BT
+/F1 16 Tf
+1 1 1 rg
+48 335 Td
+(Lezione di Fisica Matematica - Slide 1) Tj
+ET
+BT
+/F2 13 Tf
+0.1 0.1 0.12 rg
+48 280 Td
+(E = m * c^2   |   nabla x B = mu_0 * J + mu_0 * eps_0 * dE/dt) Tj
+ET
+Q
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 720 405] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 356 >>
+stream
+q
+1 1 1 rg
+0 0 720 405 re f
+0.32 0.35 0.58 rg
+36 321 648 38 re f
+0.2 0.25 0.35 RG
+2 w
+48 80 m
+672 80 l
+S
+60 65 m
+60 260 l
+S
+0.32 0.35 0.58 RG
+2.5 w
+60 90 m
+140 210 220 210 300 95 c
+S
+BT
+/F1 16 Tf
+1 1 1 rg
+48 335 Td
+(Lezione di Fisica Matematica - Slide 2) Tj
+ET
+BT
+/F2 13 Tf
+0.1 0.1 0.12 rg
+48 280 Td
+(int_{-inf}^{+inf} exp\(-x^2\) dx = sqrt\(pi\)) Tj
+ET
+Q
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 720 405] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 361 >>
+stream
+q
+1 1 1 rg
+0 0 720 405 re f
+0.52 0.35 0.78 rg
+36 321 648 38 re f
+0.2 0.25 0.35 RG
+2 w
+48 80 m
+672 80 l
+S
+60 65 m
+60 260 l
+S
+0.52 0.35 0.78 RG
+2.5 w
+60 90 m
+140 210 220 210 300 95 c
+S
+BT
+/F1 16 Tf
+1 1 1 rg
+48 335 Td
+(Lezione di Fisica Matematica - Slide 3) Tj
+ET
+BT
+/F2 13 Tf
+0.1 0.1 0.12 rg
+48 280 Td
+(det\(A - lambda * I\) = 0   |   e^{i * pi} + 1 = 0) Tj
+ET
+Q
+endstream
+endobj
+11 0 obj
+<< /Title (Lezione Fisica Matematica) >>
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000019 00000 n 
+0000000068 00000 n 
+0000000137 00000 n 
+0000000234 00000 n 
+0000000329 00000 n 
+0000000465 00000 n 
+0000000888 00000 n 
+0000001024 00000 n 
+0000001431 00000 n 
+0000001568 00000 n 
+0000001981 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R /Info 11 0 R /ID [<41484f565d646b727980878e959ca3aa> <41484f565d646b727980878e959ca3aa>] >>
+startxref
+2038
+%%EOF

@@ -2,7 +2,7 @@ import type { Point, Rect, Viewport } from '../types';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { contentBounds } from '../lib/geometry';
-import { PAGE_WIDTH, SHEET_TOP, sheetBottom } from '../lib/page';
+import { PAGE_WIDTH, SHEET_TOP, TWO_A4_HEIGHT, sheetBottom, sheetLeft, sheetRight } from '../lib/page';
 
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 6;
@@ -25,25 +25,53 @@ export function defaultViewport(): Viewport {
 }
 
 const EDGE = 24; // screen pixels of background visible beyond the sheet edges
-const LEFT_EDGE = 72; // room for the floating tool palette on the left
 
 /**
- * Keeps the two-A4 sheet in view: centred horizontally when it fits, otherwise
- * scrollable between its edges; vertically between the top of the sheet and its end.
+ * Keeps the sheet in view: anchored cleanly on the left (without empty gap),
+ * horizontally scrollable when the window is narrower than the sheet or content;
+ * vertically starting right below the toolbar and scrolling continuously through the
+ * full height of two vertical A4 sheets (~2245 px) and any further notes.
  */
-export function clampViewport(v: Viewport, size = screenSize(), bottom = sheetBottom(useStore.getState().currentPage())): Viewport {
+export function clampViewport(
+  v: Viewport,
+  size = screenSize(),
+  bottom = sheetBottom(useStore.getState().currentPage()),
+  page = useStore.getState().currentPage(),
+): Viewport {
   const zoom = clampZoom(v.zoom);
   const vw = size.w / zoom;
   const vh = size.h / zoom;
-  const pad = EDGE / zoom;
+
+  const sLeft = sheetLeft(page);
+  const sRight = sheetRight(page);
+  const totalW = sRight - sLeft;
+
+  // Vertical boundary: comfortable top margin,
+  // scrolling continuously down through the 2x A4 sheet height (~2245 px) and further notes.
+  const minY = SHEET_TOP - 16 / zoom;
+  const pageBottom = Math.max(bottom, SHEET_TOP + TWO_A4_HEIGHT);
+  const maxY = Math.max(minY, pageBottom - vh + 160 / zoom);
+
+  // Horizontal boundary: when content fits in the viewport, anchor flush on the left
+  // without jumping or shifting into the middle of the window. When content exceeds
+  // the viewport (zoom or narrow window), allow natural horizontal scrolling.
+  const minX = sLeft - 8 / zoom;
+  const maxX = totalW <= vw ? minX : Math.max(minX, sRight - vw + 24 / zoom);
+
   let x: number;
-  const left = (size.w < 700 ? EDGE : LEFT_EDGE) / zoom;
-  // Fits: centre the sheet in the area right of the palette.
-  if (PAGE_WIDTH + left + pad <= vw) x = PAGE_WIDTH / 2 - (left + vw - pad) / 2;
-  else x = Math.min(Math.max(v.x, -left), PAGE_WIDTH + pad - vw);
-  const minY = SHEET_TOP - pad;
-  const maxY = Math.max(minY, bottom + pad - vh);
-  const y = Math.min(Math.max(v.y, minY), maxY);
+  if (v.x <= -5e5) {
+    x = minX; // Snug at initial open
+  } else {
+    x = Math.min(Math.max(v.x, minX), maxX);
+  }
+
+  let y: number;
+  if (v.y <= SHEET_TOP - 5e5) {
+    y = minY; // Snug at initial open
+  } else {
+    y = Math.min(Math.max(v.y, minY), maxY);
+  }
+
   return { x, y, zoom };
 }
 
@@ -111,7 +139,7 @@ export function fitRect(r: Rect, padding = 48, maxZoom = 1.5) {
 /** Zooms so the full width of the two-A4 sheet is visible. */
 export function fitContent() {
   const { w } = screenSize();
-  const left = (w < 700 ? EDGE : LEFT_EDGE) + EDGE;
+  const left = EDGE * 2;
   const zoom = clampZoom((w - left) / PAGE_WIDTH);
   setVp({ zoom, x: -1e6, y: getViewport().y });
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { BackgroundPattern, PaperColor } from '../types';
+import type { PdfLosslessFormat, PdfQualityPreset } from '../pdf/types';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -31,6 +32,8 @@ export interface Settings {
   alignmentGuides: boolean;
   defaultZoom: number;
   autosaveDelay: number;
+  pdfQuality: PdfQualityPreset;
+  pdfFormat: PdfLosslessFormat;
   layout: PanelLayout;
 }
 
@@ -63,6 +66,8 @@ export const DEFAULT_SETTINGS: Settings = {
   alignmentGuides: true,
   defaultZoom: 1,
   autosaveDelay: 600,
+  pdfQuality: 'high',
+  pdfFormat: 'png',
   layout: DEFAULT_LAYOUT,
 };
 

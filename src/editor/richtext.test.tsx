@@ -57,4 +57,36 @@ describe('rich text rendering', () => {
     const back = htmlToDoc(html)!;
     expect(JSON.stringify(back)).toContain('\\\\alpha + \\\\beta');
   });
+
+  it('serialises and parses imageBlock in rich text document', () => {
+    const docWithImage = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Diagramma:' }] },
+        {
+          type: 'imageBlock',
+          attrs: {
+            assetId: 'ast-xyz',
+            width: 320,
+            naturalWidth: 640,
+            naturalHeight: 480,
+            mime: 'image/png',
+            indent: 1,
+            alt: 'Schema del circuito',
+          },
+        },
+      ],
+    };
+
+    const html = docToHTML(docWithImage);
+    expect(html).toContain('data-type="image-block"');
+    expect(html).toContain('data-asset-id="ast-xyz"');
+    expect(html).toContain('data-width="320"');
+
+    const parsed = htmlToDoc(html)!;
+    const imgNode = parsed.content?.find((n) => n.type === 'imageBlock');
+    expect(imgNode).toBeDefined();
+    expect(imgNode?.attrs?.assetId).toBe('ast-xyz');
+    expect(imgNode?.attrs?.width).toBe(320);
+  });
 });

@@ -35,6 +35,7 @@ async function dbl(page: Page, selector: string) {
 
 async function newPage(page: Page) {
   await page.goto('/');
+  await page.getByTestId('home-resume-workspace').click();
   await expect(page.getByTestId('canvas')).toBeVisible();
   await page.getByRole('button', { name: 'Nuova pagina' }).click();
   await expect(page.getByTestId('page-title')).toBeFocused();
@@ -58,6 +59,7 @@ async function toScreen(page: Page, x: number, y: number) {
 
 test('compact navigation, bounded page and title on the sheet', async ({ page }) => {
   await page.goto('/');
+  await page.getByTestId('home-resume-workspace').click();
   await expect(page.getByTestId('canvas')).toBeVisible();
   const sb = (await page.locator('aside.sidebar').boundingBox())!;
   expect(sb.width).toBeLessThan(400);
@@ -102,21 +104,22 @@ test('compact navigation, bounded page and title on the sheet', async ({ page })
     dt.items.add(new File([blob], 'wide.png', { type: 'image/png' }));
     document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
   });
-  await expect(page.locator('.image-item img')).toBeVisible();
+  await expect(page.locator('.image-block-container img, .item img, .image-item img')).toBeVisible();
   await page.getByRole('button', { name: 'Adatta il contenuto alla vista' }).click();
   s = await state(page);
-  const img = s.items.find((i) => i.type === 'image')!;
+  const img = s.items.find((i) => i.type === 'image' || (i.type === 'container' && (i.freeImage || i.doc?.content?.some((c: any) => c.type === 'imageBlock'))))!;
   // dragging the image far to the right keeps it inside
   await page.evaluate(() => (window as any).__glassnote.useStore.getState().setTool('select'));
-  const ib = (await page.locator('.image-item').boundingBox())!;
+  const ib = (await page.locator('.image-block-container, .image-item, .item[data-id="' + img.id + '"]').first().boundingBox())!;
   await page.mouse.move(ib.x + 20, ib.y + 20);
   await page.mouse.down();
   await page.mouse.move(ib.x + 900, ib.y + 40, { steps: 6 });
   await page.mouse.up();
   s = await state(page);
-  const img2 = s.items.find((i) => i.type === 'image')!;
+  const img2 = s.items.find((i) => i.type === 'image' || (i.type === 'container' && (i.freeImage || i.doc?.content?.some((c: any) => c.type === 'imageBlock'))))!;
   expect(img.x).toBeGreaterThanOrEqual(0);
-  expect(img2.x + img2.w).toBeLessThanOrEqual(1587.5);
+  const currentSheetW = await page.locator('.sheet-paper').evaluate((el) => parseFloat((el as HTMLElement).style.width));
+  expect(currentSheetW).toBeGreaterThanOrEqual(img2.x + img2.w);
   await page.screenshot({ path: path.join(OUT, '10-sheet.png') });
 });
 
@@ -136,7 +139,17 @@ test('text boxes are discreet and never leave a stale outline', async ({ page })
   // Edit, then open a menu in the sidebar: editing ends, text is kept, no outline remains.
   await dbl(page, '[data-id="t1"]');
   await expect(page.locator('.text-item.editing')).toHaveCount(1);
-  await page.keyboard.press('End');
+  await page.evaluate(() => {
+    const el = document.querySelector('.text-item.editing .ProseMirror') as HTMLElement;
+    if (el) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  });
   await page.keyboard.type(' e proprietà');
   await page.locator('.nav-item.page.active').click({ button: 'right' });
   await expect(page.getByRole('menu')).toBeVisible();
@@ -149,7 +162,9 @@ test('text boxes are discreet and never leave a stale outline', async ({ page })
 
   // Using the format toolbar keeps the editing session (and the text).
   await dbl(page, '[data-id="t1"]');
-  await page.keyboard.press('Shift+Home');
+  await expect(page.locator('.text-item.editing')).toHaveCount(1);
+  await page.locator('.text-item.editing .ProseMirror').focus();
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByRole('button', { name: 'Evidenziazione' }).click();
   await page.locator('.popover .swatch').nth(1).click();
   await expect(page.locator('.text-item.editing')).toHaveCount(1);
@@ -167,6 +182,8 @@ test('Delete/Backspace: characters while typing, objects when selected, groups a
 
   // Typing: Backspace removes characters, not the block
   await dbl(page, '[data-id="t1"]');
+  await expect(page.locator('.text-item.editing')).toHaveCount(1);
+  await page.locator('.text-item.editing .ProseMirror').focus();
   await page.keyboard.press('End');
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Delete');
@@ -233,9 +250,9 @@ test('connectors attach anywhere on the perimeter of any object and follow it', 
     dt.items.add(await make('i2.png'));
     document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
   });
-  await expect(page.locator('.image-item')).toHaveCount(2);
+  await expect(page.locator('[data-type="image-block"], .image-block-container, .image-item')).toHaveCount(2);
   // place images deterministically
-  const ids = (await state(page)).items.filter((i) => i.type === 'image').map((i) => i.id);
+  const ids = (await state(page)).items.filter((i) => i.type === 'image' || (i.type === 'container' && (i.freeImage || i.doc?.content?.some((c: any) => c.type === 'imageBlock')))).map((i) => i.id);
   await page.evaluate((imgIds) => {
     const s = (window as any).__glassnote.useStore.getState();
     s.updatePage((p: any) => ({ ...p, items: { ...p.items, [imgIds[0]]: { ...p.items[imgIds[0]], x: 60, y: 300 }, [imgIds[1]]: { ...p.items[imgIds[1]], x: 600, y: 300 } } }));
@@ -327,6 +344,10 @@ test('page background switch: white by default, squared or dotted per page, save
   await page.keyboard.press(`${MOD}+S`);
   await expect(page.getByTestId('save-status')).toContainText('Salvato');
   await page.reload();
+  const resume = page.getByTestId('home-resume-workspace');
+  if (await resume.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await resume.click();
+  }
   await page.locator('.nav-item.page').last().click();
   expect(await cls()).toContain('pattern-dots');
 });

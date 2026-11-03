@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, ChevronLeft, ChevronRight, Copy, FileText, FolderInput, Layers, MoreHorizontal, Palette, Pencil, Plus, Trash2 } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, Copy, FileText, FolderInput, Hash, Layers, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Star, Tag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { askText, confirmDanger, toast, useUI } from '../store/ui';
@@ -103,7 +103,23 @@ function useMenu() {
   return { menu, open, close: () => setMenu(null) };
 }
 
-function PanelHeader({ title, icon, onAdd, addLabel, onCollapse }: { title: string; icon: ReactNode; onAdd?: () => void; addLabel: string; onCollapse: () => void }) {
+function PanelHeader({
+  title,
+  icon,
+  onAdd,
+  addLabel,
+  onCollapse,
+  onTemplate,
+  templateLabel,
+}: {
+  title: string;
+  icon: ReactNode;
+  onAdd?: () => void;
+  addLabel: string;
+  onCollapse: () => void;
+  onTemplate?: () => void;
+  templateLabel?: string;
+}) {
   return (
     <div className="panel-header">
       <span className="panel-title">
@@ -114,6 +130,11 @@ function PanelHeader({ title, icon, onAdd, addLabel, onCollapse }: { title: stri
         {onAdd && (
           <button className="icon-btn sm" onClick={onAdd} title={addLabel} aria-label={addLabel}>
             <Plus size={15} />
+          </button>
+        )}
+        {onTemplate && (
+          <button className="icon-btn sm" onClick={onTemplate} title={templateLabel ?? 'Crea da template'} aria-label={templateLabel ?? 'Crea da template'}>
+            <LayoutTemplate size={14} />
           </button>
         )}
         <button className="icon-btn sm" onClick={onCollapse} title={`Comprimi ${title.toLowerCase()}`} aria-label={`Comprimi ${title}`}>
@@ -163,25 +184,25 @@ function NotebookRail({ onExpand }: { onExpand: () => void }) {
   const ws = useStore((s) => s.workspace);
   const current = useStore((s) => s.notebookId);
   const add = async () => {
-    const name = await askText({ title: 'Nuovo blocco appunti', label: 'Nome', initial: '', placeholder: 'Es. Ricerca Operativa', confirmLabel: 'Crea' });
+    const name = await askText({ title: 'Nuovo quaderno', label: 'Nome', initial: '', placeholder: 'Es. Ricerca Operativa', confirmLabel: 'Crea' });
     if (name?.trim()) useStore.getState().addNotebook(name.trim());
   };
   return (
-    <nav className="nb-rail" aria-label="Blocchi appunti">
-      <button className="icon-btn sm" onClick={onExpand} title="Mostra elenco blocchi appunti" aria-label="Mostra Blocchi">
+    <nav className="nb-rail" aria-label="Quaderni">
+      <button className="icon-btn sm" onClick={onExpand} title="Mostra elenco quaderni" aria-label="Mostra Quaderni">
         <BookOpen size={15} />
       </button>
       <div className="nb-rail-list">
         {ws.notebookIds.map((id) => {
           const nb = ws.notebooks[id];
           return (
-            <button key={id} className={`nb-chip${id === current ? ' active' : ''}`} style={{ ['--nb' as string]: nb.color }} onClick={() => useStore.getState().selectNotebook(id)} title={nb.name} aria-label={`Blocco ${nb.name}`} aria-current={id === current}>
+            <button key={id} className={`nb-chip${id === current ? ' active' : ''}`} style={{ ['--nb' as string]: nb.color }} onClick={() => useStore.getState().selectNotebook(id)} title={nb.name} aria-label={`Quaderno ${nb.name}`} aria-current={id === current}>
               {nb.name.trim().charAt(0).toUpperCase() || '?'}
             </button>
           );
         })}
       </div>
-      <button className="icon-btn sm" onClick={add} title="Nuovo blocco appunti" aria-label="Nuovo blocco appunti">
+      <button className="icon-btn sm" onClick={add} title="Nuovo quaderno" aria-label="Nuovo quaderno">
         <Plus size={15} />
       </button>
     </nav>
@@ -236,36 +257,37 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
   const current = useStore((s) => s.notebookId);
   const { menu, open, close } = useMenu();
   const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<ID | null>(null);
 
   const add = async () => {
-    const name = await askText({ title: 'Nuovo blocco appunti', label: 'Nome', initial: '', placeholder: 'Es. Ricerca Operativa', confirmLabel: 'Crea' });
+    const name = await askText({ title: 'Nuovo quaderno', label: 'Nome', initial: '', placeholder: 'Es. Ricerca Operativa', confirmLabel: 'Crea' });
     if (name?.trim()) useStore.getState().addNotebook(name.trim());
   };
 
   const rename = async (id: ID) => {
-    const name = await askText({ title: 'Rinomina blocco appunti', label: 'Nome', initial: ws.notebooks[id].name, confirmLabel: 'Rinomina' });
+    const name = await askText({ title: 'Rinomina quaderno', label: 'Nome', initial: ws.notebooks[id].name, confirmLabel: 'Rinomina' });
     if (name?.trim()) useStore.getState().mutateWorkspace((w) => W.renameNotebook(w, id, name.trim()));
   };
 
   const remove = async (id: ID) => {
     const nb = ws.notebooks[id];
     const n = nb.sectionIds.reduce((a, s) => a + (ws.sections[s]?.pageIds.length ?? 0), 0);
-    if (await confirmDanger('Eliminare il blocco appunti?', `"${nb.name}" e le sue ${nb.sectionIds.length} sezioni verranno eliminati. Le ${n} pagine finiranno nel cestino e potrai ripristinarle.`)) {
+    if (await confirmDanger('Eliminare il quaderno?', `"${nb.name}" e le sue ${nb.sectionIds.length} sezioni verranno eliminati. Le ${n} pagine finiranno nel cestino e potrai ripristinarle.`)) {
       useStore.getState().deleteNotebook(id);
-      toast('Blocco appunti eliminato. Le pagine sono nel cestino.');
+      toast('Quaderno eliminato. Le pagine sono nel cestino.');
     }
   };
 
   return (
     <>
-      <PanelHeader title="Blocchi" icon={<BookOpen size={14} />} onAdd={add} addLabel="Nuovo blocco appunti" onCollapse={onCollapse} />
+      <PanelHeader title="Quaderni" icon={<BookOpen size={14} />} onAdd={add} addLabel="Nuovo quaderno" onCollapse={onCollapse} />
       <ul className="nav-list" onDragLeave={() => setDropIdx(null)}>
         {ws.notebookIds.map((id, i) => {
           const nb = ws.notebooks[id];
           return (
             <li
               key={id}
-              className={`nav-item${id === current ? ' active' : ''}${dropIdx === i ? ' drop-before' : ''}`}
+              className={`nav-item${id === current ? ' active' : ''}${dropIdx === i ? ' drop-before' : ''}${dropTarget === id ? ' drop-into' : ''}`}
               draggable
               onDragStart={(e) => {
                 dragData = { kind: 'notebook', id };
@@ -276,15 +298,29 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
                 if (dragData?.kind === 'notebook') {
                   e.preventDefault();
                   setDropIdx(i);
+                } else if (dragData?.kind === 'section' && ws.sections[dragData.id]?.notebookId !== id) {
+                  // a section dropped on a notebook moves into it
+                  e.preventDefault();
+                  setDropTarget(id);
                 }
               }}
+              onDragLeave={() => setDropTarget(null)}
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragData?.kind === 'notebook') {
                   const from = ws.notebookIds.indexOf(dragData.id);
                   useStore.getState().mutateWorkspace((w) => W.reorderNotebook(w, dragData!.id, from < i ? i - 1 : i));
+                } else if (dragData?.kind === 'section') {
+                  const sid = dragData.id;
+                  if (ws.sections[sid] && ws.sections[sid].notebookId !== id) {
+                    const wasCurrent = useStore.getState().sectionId === sid;
+                    useStore.getState().mutateWorkspace((w) => W.moveSection(w, sid, id));
+                    if (wasCurrent) useStore.setState({ notebookId: id });
+                    toast(`Sezione spostata in "${nb.name}"`);
+                  }
                 }
                 setDropIdx(null);
+                setDropTarget(null);
                 dragData = null;
               }}
               onClick={() => useStore.getState().selectNotebook(id)}
@@ -296,7 +332,7 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
                 {nb.name.trim().charAt(0).toUpperCase() || '?'}
               </span>
               <span className="nav-label">{nb.name}</span>
-              <button className="icon-btn xs more" onClick={(e) => open(id, e)} aria-label="Azioni blocco">
+              <button className="icon-btn xs more" onClick={(e) => open(id, e)} aria-label="Azioni quaderno">
                 <MoreHorizontal size={14} />
               </button>
             </li>
@@ -304,7 +340,7 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
         })}
         {ws.notebookIds.length === 0 && (
           <li className="nav-empty">
-            Nessun blocco.
+            Nessun quaderno.
             <button className="link-btn" onClick={add}>
               Creane uno
             </button>
@@ -316,6 +352,11 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
           anchor={menu}
           onClose={close}
           items={[
+            {
+              label: ws.notebooks[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
+              icon: <Star size={14} />,
+              onClick: () => useStore.getState().mutateWorkspace((w) => W.toggleNotebookStar(w, menu.id)),
+            },
             { label: 'Rinomina', icon: <Pencil size={14} />, onClick: () => rename(menu.id) },
             { label: 'Colore', icon: <Palette size={14} />, submenu: colorSubmenu((c) => useStore.getState().mutateWorkspace((w) => W.setNotebookColor(w, menu.id, c))) },
             { label: 'Elimina', icon: <Trash2 size={14} />, danger: true, onClick: () => remove(menu.id) },
@@ -415,13 +456,18 @@ function SectionList({ onCollapse }: { onCollapse: () => void }) {
             </button>
           </li>
         )}
-        {!nb && <li className="nav-empty">Seleziona un blocco appunti.</li>}
+        {!nb && <li className="nav-empty">Seleziona un quaderno.</li>}
       </ul>
       {menu && ws.sections[menu.id] && (
         <ItemMenu
           anchor={menu}
           onClose={close}
           items={[
+            {
+              label: ws.sections[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
+              icon: <Star size={14} />,
+              onClick: () => useStore.getState().mutateWorkspace((w) => W.toggleSectionStar(w, menu.id)),
+            },
             { label: 'Rinomina', icon: <Pencil size={14} />, onClick: () => rename(menu.id) },
             { label: 'Colore', icon: <Palette size={14} />, submenu: colorSubmenu((c) => useStore.getState().mutateWorkspace((w) => W.setSectionColor(w, menu.id, c))) },
             { label: 'Elimina', icon: <Trash2 size={14} />, danger: true, onClick: () => remove(menu.id) },
@@ -438,12 +484,28 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
   const current = useStore((s) => s.pageId);
   const { menu, open, close } = useMenu();
   const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const sec = sectionId ? ws.sections[sectionId] : null;
   const trashCount = ws.trash.length;
+
+  const sectionTags = useMemo(() => W.allWorkspaceTags(ws, sectionId), [ws, sectionId]);
+  const activeTag = tagFilter && sectionTags.includes(tagFilter) ? tagFilter : null;
 
   const rename = async (id: ID) => {
     const title = await askText({ title: 'Rinomina pagina', label: 'Titolo', initial: ws.pages[id].title, confirmLabel: 'Rinomina' });
     if (title?.trim()) useStore.getState().mutateWorkspace((w) => W.renamePage(w, id, title.trim()));
+  };
+  const addTagDialog = async (id: ID) => {
+    const raw = await askText({
+      title: 'Aggiungi tag alla pagina',
+      label: 'Tag (es. esame, importante, da-ripassare)',
+      initial: '',
+      placeholder: 'esame',
+      confirmLabel: 'Aggiungi',
+    });
+    if (raw?.trim()) {
+      useStore.getState().mutateWorkspace((w) => W.addPageTag(w, id, raw.trim()));
+    }
   };
   const remove = async (id: ID) => {
     if (await confirmDanger('Spostare la pagina nel cestino?', `"${ws.pages[id].title}" potrà essere ripristinata dal cestino.`, 'Sposta nel cestino')) {
@@ -470,12 +532,38 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
 
   return (
     <>
-      <PanelHeader title="Pagine" icon={<FileText size={14} />} onAdd={sec ? () => useStore.getState().addPage() : undefined} addLabel="Nuova pagina" onCollapse={onCollapse} />
+      <PanelHeader
+        title="Pagine"
+        icon={<FileText size={14} />}
+        onAdd={sec ? () => useStore.getState().addPage() : undefined}
+        addLabel="Nuova pagina"
+        onTemplate={sec ? () => useUI.getState().set({ templatePickerOpen: true }) : undefined}
+        templateLabel="Crea da template"
+        onCollapse={onCollapse}
+      />
       {sec && <div className="panel-sub">{sec.name}</div>}
+      {sectionTags.length > 0 && (
+        <div className="sidebar-tag-filter" data-testid="sidebar-tag-filter" role="group" aria-label="Filtra per tag">
+          {sectionTags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`sidebar-tag-chip${activeTag === t ? ' active' : ''}`}
+              data-testid={`sidebar-filter-tag-${t}`}
+              onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
+              title={activeTag === t ? 'Rimuovi filtro tag' : `Filtra per #${t}`}
+            >
+              <Hash size={10} />
+              <span>{t}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <ul className="nav-list pages" onDragLeave={() => setDropIdx(null)}>
         {sec?.pageIds.map((id, i) => {
           const p = ws.pages[id];
           if (!p) return null;
+          if (activeTag && !p.tags?.includes(activeTag)) return null;
           return (
             <li
               key={id}
@@ -510,7 +598,19 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
             >
               <div className="page-text">
                 <span className="nav-label">{p.title || 'Senza titolo'}</span>
-                <span className="page-meta">{relTime(p.updatedAt)}</span>
+                <div className="page-meta-line">
+                  <span className="page-meta">{relTime(p.updatedAt)}</span>
+                  {p.tags && p.tags.length > 0 && (
+                    <span className="page-nav-tags">
+                      {p.tags.slice(0, 2).map((t) => (
+                        <span key={t} className="page-nav-tag">
+                          #{t}
+                        </span>
+                      ))}
+                      {p.tags.length > 2 && <span className="page-nav-tag">+{p.tags.length - 2}</span>}
+                    </span>
+                  )}
+                </div>
               </div>
               <button className="icon-btn xs more" onClick={(e) => open(id, e)} aria-label="Azioni pagina">
                 <MoreHorizontal size={14} />
@@ -521,9 +621,14 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
         {sec && sec.pageIds.length === 0 && (
           <li className="nav-empty">
             Sezione vuota.
-            <button className="link-btn" onClick={() => useStore.getState().addPage()}>
-              Nuova pagina
-            </button>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+              <button className="link-btn" onClick={() => useStore.getState().addPage()}>
+                Nuova pagina
+              </button>
+              <button className="link-btn" onClick={() => useUI.getState().set({ templatePickerOpen: true })}>
+                Da template…
+              </button>
+            </div>
           </li>
         )}
         {!sec && <li className="nav-empty">Seleziona una sezione.</li>}
@@ -536,7 +641,13 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
           anchor={menu}
           onClose={close}
           items={[
+            {
+              label: ws.pages[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
+              icon: <Star size={14} />,
+              onClick: () => useStore.getState().mutateWorkspace((w) => W.togglePageStar(w, menu.id)),
+            },
             { label: 'Rinomina', icon: <Pencil size={14} />, onClick: () => rename(menu.id) },
+            { label: 'Aggiungi tag…', icon: <Tag size={14} />, onClick: () => addTagDialog(menu.id) },
             { label: 'Duplica', icon: <Copy size={14} />, onClick: () => void useStore.getState().duplicatePage(menu.id) },
             { label: 'Sposta in…', icon: <FolderInput size={14} />, submenu: moveTargets(menu.id) },
             { label: 'Sposta nel cestino', icon: <Trash2 size={14} />, danger: true, onClick: () => remove(menu.id) },

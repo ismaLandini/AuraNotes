@@ -2,21 +2,27 @@ import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from '
 import { useStore } from './store/useStore';
 import { useSettings } from './store/settings';
 import { isModalOpen, useUI } from './store/ui';
-import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
+import { HomeView } from './components/HomeView';
 import { Ribbon } from './components/Ribbon';
-import { ToolPalette, ZoomControls } from './components/ToolPalette';
+import { SaveIndicator } from './components/SaveIndicator';
+import { Breadcrumb } from './components/Breadcrumb';
+import { FloatingFormatBar } from './components/FloatingFormatBar';
+import { NavMiniMenu, ToolPalette, ZoomControls } from './components/ToolPalette';
 import { Canvas } from './canvas/Canvas';
 import { ConfirmDialog, PromptDialog, SearchDialog, ShortcutsOverlay, Toasts, TrashDialog } from './components/Dialogs';
 import { SettingsDialog, exportBackup } from './components/SettingsDialog';
 import { ExportDialog } from './components/ExportDialog';
+import { PdfImportDialog, PdfImportProgressBanner } from './components/PdfImportDialog';
+import { TemplatePickerModal } from './components/TemplatePickerModal';
+import { PageOutline } from './components/PageOutline';
 import { PrintRoot } from './export/PrintRoot';
 import { dispatchKey, registerShortcuts } from './shortcuts/registry';
 import { buildShortcuts } from './shortcuts/definitions';
 import { startAutosave } from './storage/autosave';
 import { requestPersistence, storageEstimate } from './storage/db';
 import { toast } from './store/ui';
-import { initDesktop } from './desktop';
+import { desktop, initDesktop, isDesktop } from './desktop';
 
 export class ErrorBoundary extends Component<{ children: ReactNode; label?: string }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -24,7 +30,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode; label?: stri
     return { error };
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('GlassNote error', error, info.componentStack);
+    console.error('AuraNotes error', error, info.componentStack);
   }
   render() {
     if (this.state.error) {
@@ -58,6 +64,9 @@ function useTheme() {
     const apply = () => {
       const dark = theme === 'dark' || (theme === 'system' && mq.matches);
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#081e42');
+      void desktop()?.setTheme(theme, dark);
     };
     apply();
     mq.addEventListener('change', apply);
@@ -81,6 +90,7 @@ export default function App() {
   const loadError = useStore((s) => s.loadError);
   const sidebarVisible = useSettings((s) => s.layout.sidebarVisible);
   const mobileNavOpen = useUI((s) => s.mobileNavOpen);
+  const homeOpen = useUI((s) => s.homeOpen);
   const compact = useCompact();
   useTheme();
 
@@ -112,7 +122,7 @@ export default function App() {
     return (
       <div className="splash">
         <span className="brand-mark big" />
-        <p>Apertura dei blocchi appunti…</p>
+        <p>Apertura dei quaderni…</p>
       </div>
     );
   }
@@ -130,35 +140,59 @@ export default function App() {
   }
 
   return (
-    <div className={`app${compact ? ' compact' : ''}`}>
-      <TopBar compact={compact} />
-      <div className="main">
-        {!compact && sidebarVisible && (
-          <ErrorBoundary label="Errore nella navigazione">
-            <Sidebar />
-          </ErrorBoundary>
-        )}
-        {compact && mobileNavOpen && (
-          <>
-            <div className="scrim" onClick={() => useUI.getState().set({ mobileNavOpen: false })} />
-            <Sidebar overlay />
-          </>
-        )}
-        <main className="workspace">
-          <Ribbon />
-          <div className="canvas-wrap">
-            <ErrorBoundary label="Errore nel canvas">
-              <Canvas />
-            </ErrorBoundary>
-            <ToolPalette />
-            <ZoomControls />
-          </div>
-        </main>
+    <div className={`app${compact ? ' compact' : ''}${homeOpen ? ' is-home' : ''}`}>
+      <div className={`window-titlebar${isDesktop() ? ' is-desktop' : ''}`} data-ui>
+        <span className="window-titlebar-title" aria-hidden="true">AuraNotes</span>
+        {!homeOpen ? <Breadcrumb /> : <div className="titlebar-crumbs" />}
+        <SaveIndicator />
       </div>
+      {homeOpen ? (
+        <div className="main home-main-wrap">
+          <ErrorBoundary label="Errore nella schermata Home">
+            <HomeView />
+          </ErrorBoundary>
+        </div>
+      ) : (
+        <>
+          <Ribbon />
+          <div className="main">
+            {!compact && sidebarVisible && (
+              <ErrorBoundary label="Errore nella navigazione">
+                <Sidebar />
+              </ErrorBoundary>
+            )}
+            {compact && mobileNavOpen && (
+              <>
+                <div className="scrim" onClick={() => useUI.getState().set({ mobileNavOpen: false })} />
+                <Sidebar overlay />
+              </>
+            )}
+            <main className="workspace">
+              <div className="canvas-container">
+                <div className="vertical-tool-rail">
+                  <NavMiniMenu compact={compact} />
+                  <ToolPalette />
+                </div>
+                <div className="canvas-wrap">
+                  <ErrorBoundary label="Errore nel canvas">
+                    <Canvas />
+                  </ErrorBoundary>
+                  <PageOutline />
+                  <ZoomControls />
+                </div>
+              </div>
+            </main>
+          </div>
+          <FloatingFormatBar />
+        </>
+      )}
       <SearchDialog />
       <SettingsDialog />
       <ShortcutsOverlay />
       <ExportDialog />
+      <PdfImportDialog />
+      <PdfImportProgressBanner />
+      <TemplatePickerModal />
       <TrashDialog />
       <ConfirmDialog />
       <PromptDialog />

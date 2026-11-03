@@ -1,0 +1,26 @@
+{
+  "name": "AuraNotes — Appunti Universitari",
+  "short_name": "AuraNotes",
+  "description": "Quaderno digitale per appunti universitari con design Liquid Glass per macOS, formule LaTeX e annotazioni libere.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef2f7",
+  "theme_color": "#007aff",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["education", "productivity"]
+}

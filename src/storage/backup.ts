@@ -5,10 +5,11 @@ import { blobToDataUrl, dataUrlToBlob } from './assets';
 import { newId, repairWorkspace } from '../model/workspaceOps';
 import { referencedAssets } from '../model/pageOps';
 
-export const BACKUP_FORMAT = 'glassnote-backup';
+export const BACKUP_FORMAT = 'auranotes-backup';
+export const LEGACY_BACKUP_FORMAT = 'glassnote-backup';
 
 export interface BackupFile {
-  format: typeof BACKUP_FORMAT;
+  format: typeof BACKUP_FORMAT | typeof LEGACY_BACKUP_FORMAT;
   schemaVersion: number;
   exportedAt: string;
   workspace: Workspace;
@@ -47,12 +48,13 @@ export function downloadBlob(blob: Blob, filename: string): void {
 export class BackupValidationError extends Error {}
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-const ITEM_TYPES = new Set(['text', 'image', 'stroke', 'shape', 'connector']);
+const ITEM_TYPES = new Set(['text', 'image', 'stroke', 'shape', 'connector', 'container']);
 
 function validateItem(it: unknown): it is CanvasItem {
   if (!isObj(it) || typeof it.id !== 'string' || !ITEM_TYPES.has(String(it.type))) return false;
   switch (it.type) {
     case 'text':
+    case 'container':
       return typeof it.x === 'number' && typeof it.y === 'number' && typeof it.w === 'number' && isObj(it.doc);
     case 'image':
       return typeof it.assetId === 'string' && typeof it.w === 'number' && typeof it.h === 'number';
@@ -68,10 +70,12 @@ function validateItem(it: unknown): it is CanvasItem {
 
 /** Validates a parsed backup. Throws BackupValidationError with a readable message. */
 export function validateBackup(raw: unknown): BackupFile {
-  if (!isObj(raw) || raw.format !== BACKUP_FORMAT) throw new BackupValidationError('Il file non è un backup di GlassNote.');
+  if (!isObj(raw) || (raw.format !== BACKUP_FORMAT && raw.format !== LEGACY_BACKUP_FORMAT)) {
+    throw new BackupValidationError('Il file non è un backup di AuraNotes.');
+  }
   if (typeof raw.schemaVersion !== 'number' || raw.schemaVersion > SCHEMA_VERSION) throw new BackupValidationError('Il backup proviene da una versione più recente dell’app.');
   const ws = raw.workspace;
-  if (!isObj(ws) || !Array.isArray(ws.notebookIds) || !isObj(ws.notebooks) || !isObj(ws.sections) || !isObj(ws.pages)) throw new BackupValidationError('Struttura dei blocchi appunti non valida.');
+  if (!isObj(ws) || !Array.isArray(ws.notebookIds) || !isObj(ws.notebooks) || !isObj(ws.sections) || !isObj(ws.pages)) throw new BackupValidationError('Struttura dei quaderni non valida.');
   if (!Array.isArray(raw.pages) || !Array.isArray(raw.assets)) throw new BackupValidationError('Contenuto delle pagine mancante.');
   for (const p of raw.pages) {
     if (!isObj(p) || typeof p.id !== 'string' || !isObj(p.items) || !Array.isArray(p.order)) throw new BackupValidationError('Una pagina del backup è danneggiata.');
@@ -123,6 +127,7 @@ export function remapBackup(b: BackupFile): BackupFile {
         c.id = m(it.id);
         if (c.parentId) c.parentId = m(c.parentId);
         if (c.type === 'image') c.assetId = m(c.assetId);
+        if (c.type === 'container' && c.doc) remapDocAssets(c.doc as Record<string, unknown>, m);
         if (c.type === 'connector') {
           c.fromId = m(c.fromId);
           c.toId = m(c.toId);
@@ -133,6 +138,22 @@ export function remapBackup(b: BackupFile): BackupFile {
     });
   const assets = b.assets.map((a) => ({ ...a, id: m(a.id) }));
   return { ...b, workspace: out, pages, assets };
+}
+
+function remapDocAssets(node: Record<string, unknown>, m: (id: string) => string): void {
+  if (node.type === 'imageBlock' && node.attrs && typeof node.attrs === 'object') {
+    const attrs = node.attrs as Record<string, unknown>;
+    if (typeof attrs.assetId === 'string') attrs.assetId = m(attrs.assetId);
+    if (attrs.source && typeof attrs.source === 'object') {
+      const src = attrs.source as Record<string, unknown>;
+      if (typeof src.assetId === 'string') src.assetId = m(src.assetId);
+    }
+  }
+  if (Array.isArray(node.content)) {
+    for (const child of node.content) {
+      if (child && typeof child === 'object') remapDocAssets(child as Record<string, unknown>, m);
+    }
+  }
 }
 
 export function mergeWorkspaces(base: Workspace, add: Workspace): Workspace {

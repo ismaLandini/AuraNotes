@@ -9,7 +9,6 @@ import { BackupValidationError, backupToAssets, buildBackup, downloadBlob, merge
 import { putAsset, replaceAll, requestPersistence, saveAll, storageEstimate } from '../storage/db';
 import { flush } from '../storage/autosave';
 import type { BackgroundPattern, PaperColor } from '../types';
-import type { PdfLosslessFormat, PdfQualityPreset } from '../pdf/types';
 import { formatCombo } from '../shortcuts/registry';
 import { desktop } from '../desktop';
 
@@ -207,21 +206,6 @@ export function SettingsDialog() {
               <option value={600}>0,6 s</option>
               <option value={1500}>1,5 s</option>
               <option value={4000}>4 s</option>
-            </select>
-          </label>
-          <label className="row">
-            <span>Qualità predefinita importazione PDF</span>
-            <select value={s.pdfQuality} onChange={(e) => s.set({ pdfQuality: e.target.value as PdfQualityPreset })} data-testid="settings-pdf-quality">
-              <option value="standard">Standard (150 DPI)</option>
-              <option value="high">Alta (220 DPI, min 2000 px)</option>
-              <option value="maximum">Massima (300 DPI)</option>
-            </select>
-          </label>
-          <label className="row">
-            <span>Formato immagini pagine PDF</span>
-            <select value={s.pdfFormat} onChange={(e) => s.set({ pdfFormat: e.target.value as PdfLosslessFormat })} data-testid="settings-pdf-format">
-              <option value="png">PNG senza perdita (predefinito)</option>
-              <option value="webp">WebP senza perdita (compatta)</option>
             </select>
           </label>
           <button className="btn sm" onClick={() => (close(), useUI.getState().set({ shortcutsOpen: true }))}>

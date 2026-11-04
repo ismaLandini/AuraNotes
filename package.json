@@ -1,23 +1,24 @@
 {
   "name": "auranotes",
   "private": true,
-  "version": "1.2.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "lint": "oxlint src e2e e2e-desktop desktop scripts",
+    "lint": "oxlint src e2e",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
-    "app:dev": "npm run build && electron .",
-    "app:mac": "npm run build && node scripts/build-mac.mjs",
-    "app:mac:only": "node scripts/build-mac.mjs"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "@tiptap/extension-code-block-lowlight": "^2.27.3",
     "@tiptap/extension-color": "^2.27.3",
     "@tiptap/extension-font-family": "^2.27.3",
@@ -49,8 +50,8 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@electron/packager": "^20.3.0",
     "@playwright/test": "^1.64.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/katex": "^0.16.8",
@@ -58,7 +59,6 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
-    "electron": "44.7.0",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "oxlint": "^1.81.0",
@@ -69,6 +69,5 @@
   },
   "productName": "AuraNotes",
   "description": "Appunti universitari su foglio libero, per macOS",
-  "main": "desktop/main.cjs",
   "author": "Eleonora"
 }

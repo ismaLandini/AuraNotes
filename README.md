@@ -10,24 +10,25 @@ Fai doppio clic su **AuraNotes.app**: si apre direttamente, senza terminale, ser
 - **Salvataggio**: automatico mentre scrivi; alla chiusura (⌘Q o chiudendo la finestra) l'app finisce di salvare prima di uscire.
 - **Backup automatici**: ogni 20 minuti, se qualcosa è cambiato, e alla chiusura, in `~/Library/Application Support/AuraNotes/Backups` (si tengono gli ultimi 20). Dal menu File → *Mostra cartella dei backup automatici*.
 - **Appunti scritti nella versione browser**: hanno un archivio separato (legato all'indirizzo `localhost`). Esportali dal browser con *Impostazioni → Esporta backup* e importali nell'app con *File → Importa backup…* (scegli *Unisci*).
-- **PDF**: nell'app il pulsante *Salva PDF…* crea il file direttamente; *Stampa…* apre la finestra di stampa.
+- **PDF**: *Salva PDF…* e *Stampa…* aprono la finestra di stampa di macOS (scegli “Salva come PDF”).
 - Al primo avvio macOS potrebbe dire che l'app è di uno sviluppatore non identificato: clic destro sull'icona → *Apri* → *Apri*. Serve una volta sola.
 
 ### Ricreare AuraNotes.app
 
-Requisiti: Node.js 20 o superiore.
+Requisiti: Node.js 20 o superiore e Rust (`rustup`, toolchain stable per Apple Silicon).
 
 ```bash
 cd glassnote
 npm install
-npm run app:mac                      # Mac con chip Apple (M1/M2/M3/M4)
-npm run app:mac -- --arch=x64        # Mac Intel
-npm run app:mac -- --out=..          # copia anche AuraNotes.app nella cartella sopra
+npm run tauri:build    # crea AuraNotes.app (Tauri 2, Apple Silicon)
+npm run tauri:dev      # avvia l'app in sviluppo
 ```
 
-Il risultato è in `release/AuraNotes-darwin-arm64/AuraNotes.app`. Su macOS lo script lo firma in modo ad-hoc. Se la rete blocca il download di Electron, scarica a mano `electron-v44.7.0-darwin-arm64.zip` dalle release di Electron su GitHub in una cartella e lancia `ELECTRON_ZIP_DIR=/quella/cartella npm run app:mac`.
+Il risultato è in `src-tauri/target/release/bundle/macos/AuraNotes.app`. Il bundle si firma in modo ad-hoc con `codesign --force --deep --sign - AuraNotes.app`.
 
-Per provare l'app senza impacchettarla: `npm run app:dev`.
+**PDF importati**: nel database viene salvato solo il file PDF originale (deduplicato con SHA-256). Le pagine sono disegnate al momento da pdf.js, con cache in memoria (150 MB): nessuna immagine per pagina occupa spazio su disco. In stampa/esportazione le pagine sono rese a 300 DPI.
+
+**Esportazione PDF**: *Salva PDF…* apre la finestra di stampa di macOS, dove scegli “Salva come PDF”.
 
 ## Versione browser (sviluppo)
 
@@ -48,9 +49,8 @@ npm run dev        # http://localhost:5173
 | `npm test` | test unitari e di componente (Vitest + Testing Library) |
 | `npm run test:e2e` | test end-to-end nel browser (Playwright) |
 | `npm run check` | typecheck + lint + test + build in sequenza |
-| `npm run app:mac` | crea AuraNotes.app |
-| `npm run app:dev` | avvia l'app desktop dalla cartella del progetto |
-| `xvfb-run node e2e-desktop/desktop.mjs` (Linux) o `node e2e-desktop/desktop.mjs` (Mac) | prova l'app desktop: chiusura, riapertura, dati e backup |
+| `npm run tauri:build` | crea AuraNotes.app |
+| `npm run tauri:dev` | avvia l'app desktop in sviluppo |
 
 Per i test end-to-end, la prima volta esegui `npx playwright install chromium`. In ambienti dove il download non è possibile puoi indicare un Chromium esistente con `CHROME_PATH=/percorso/chromium npm run test:e2e`.
 

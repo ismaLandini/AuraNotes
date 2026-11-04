@@ -7,6 +7,7 @@ import { type AcademicTemplateId, createTemplatePage, getTemplate } from '../mod
 import { constrainChanged } from '../lib/page';
 import { deletePages, loadPage, loadWorkspace } from '../storage/db';
 import { garbageCollectAssets } from '../storage/assets';
+import { cleanupLegacyPdfRasterBlocks } from '../storage/legacyCleanup';
 
 import { useUI } from './ui';
 
@@ -120,6 +121,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   initInternal: async () => {
     try {
+      await cleanupLegacyPdfRasterBlocks().catch(() => undefined);
       let ws = await loadWorkspace();
       let preloaded: Record<ID, PageContent> = {};
       if (!ws) {

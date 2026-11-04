@@ -15,6 +15,7 @@ import { destroyPdfDocument, openPdfDocument, renderPdfPageToBlob } from './pdf/
 import { getPdfPageUrl, getPageCacheStats, clearPageCache } from './pdf/pageCache';
 import { clearPrint, preparePrint } from './export/PrintRoot';
 import { DEFAULT_PRINT_OPTIONS } from './export/pagination';
+import { isDesktop } from './desktop';
 
 // Read-only handle for automated end-to-end checks and debugging from the console.
 const debugHandle = {
@@ -47,7 +48,7 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+if ('serviceWorker' in navigator && import.meta.env.PROD && !isDesktop()) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('./sw.js')

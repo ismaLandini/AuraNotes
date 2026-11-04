@@ -1,7 +1,10 @@
 /**
- * Integration with the macOS shell (AuraNotes.app). In a normal browser
- * `window.auranotesDesktop` is absent and nothing here runs.
+ * Integration with the macOS Tauri 2 shell (AuraNotes.app).
+ * In a normal browser neither `__TAURI_INTERNALS__` nor `window.auranotesDesktop`
+ * is present and `desktop()` returns `null`.
  */
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { flush, hasUnsavedChanges } from './storage/autosave';
 import { useStore } from './store/useStore';
 import { useUI } from './store/ui';
@@ -21,9 +24,64 @@ export interface DesktopBridge {
   setTheme(theme: string, dark: boolean): Promise<void>;
 }
 
+function hasTauriInternals(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+const tauriBridge: DesktopBridge = {
+  platform: 'darwin',
+  onFlushRequest(handler) {
+    void listen('glassnotes:flush-request', async () => {
+      try {
+        await handler();
+      } finally {
+        await invoke('flush_done').catch(() => undefined);
+      }
+    });
+  },
+  onMenu(handler) {
+    void listen<string>('glassnotes:menu', (event) => {
+      if (typeof event.payload === 'string') {
+        handler(event.payload);
+      }
+    });
+  },
+  writeBackup(json: string) {
+    return invoke<string>('write_backup', { json });
+  },
+  async openBackups() {
+    await invoke('open_backups');
+  },
+  async savePdf(title: string): Promise<string | null> {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('afterprint', done);
+        resolve();
+      };
+      window.addEventListener('afterprint', done);
+      setTimeout(done, 60_000);
+      void invoke<string | null>('save_pdf', { title }).catch(() => done());
+    });
+    return null;
+  },
+  info() {
+    return invoke<{ version: string; userData: string; backups: string }>('get_app_info');
+  },
+  async setTheme(theme: string, dark: boolean) {
+    await invoke('set_theme', { theme, dark });
+  },
+};
+
 export function desktop(): DesktopBridge | null {
+  if (typeof window === 'undefined') return null;
   const w = window as unknown as { auranotesDesktop?: DesktopBridge; glassnotesDesktop?: DesktopBridge };
-  return w.auranotesDesktop ?? w.glassnotesDesktop ?? null;
+  if (w.auranotesDesktop) return w.auranotesDesktop;
+  if (w.glassnotesDesktop) return w.glassnotesDesktop;
+  if (hasTauriInternals()) return tauriBridge;
+  return null;
 }
 
 export const isDesktop = () => desktop() !== null;
@@ -81,6 +139,9 @@ function runMenu(cmd: string) {
     case 'import-backup':
       pickBackupFile();
       break;
+    case 'open-backups':
+      void desktop()?.openBackups();
+      break;
   }
 }
 
@@ -96,6 +157,24 @@ export function initDesktop(): void {
     await autoBackup();
   });
   d.onMenu(runMenu);
+
+  if (hasTauriInternals()) {
+    document.addEventListener(
+      'click',
+      (e) => {
+        const target = e.target as HTMLElement | null;
+        const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+        if (!anchor) return;
+        const href = anchor.getAttribute('href') ?? '';
+        if (/^(https?:|mailto:)/i.test(href)) {
+          e.preventDefault();
+          void invoke('open_external', { url: href }).catch(() => undefined);
+        }
+      },
+      true,
+    );
+  }
+
   // First backup shortly after start (once the notes are loaded), then periodically.
   setTimeout(() => void autoBackup(true), 15_000);
   setInterval(() => void autoBackup(), BACKUP_EVERY_MS);

@@ -1230,18 +1230,17 @@ export function Canvas() {
     const world = toWorld(e.clientX, e.clientY);
     const hit = hitAt(cur, world, 6 / getVp().zoom);
 
-    const isImageOrPdf = Boolean(
-      target.closest('.image-block-container, .image-block-wrapper, [data-testid="image-block"], img, .image-item, [data-image-block-id]') ||
-      (hit?.type === 'container' && (hit as NoteContainerItem).freeImage) ||
-      hit?.type === 'image'
+    // Se l'utente fa doppio click su un blocco di solo testo per modificarne il contenuto:
+    const isPureTextContent = Boolean(
+      target.closest('p, h1, h2, h3, li, blockquote, code, table') &&
+      !target.closest('[data-type="image-block"], [data-testid="image-block"], .image-block-container, .image-block-wrapper, img, svg, .image-item')
     );
 
-    if (isImageOrPdf) {
-      createTextBlock({ x: world.x, y: world.y - 12 }, { variant: 'plain' });
-    } else if (hit?.type === 'text' || hit?.type === 'container') {
+    if (hit && isPureTextContent && (hit.type === 'text' || (hit.type === 'container' && !(hit as NoteContainerItem).freeImage))) {
       enterEdit(hit.id, e.clientX, e.clientY);
     } else {
-      startCreateText(world, 'plain', null);
+      // Qualsiasi doppio click su foto, PDF, canvas o sopra un contenitore crea un nuovo blocco di testo classico nel punto cliccato
+      createTextBlock({ x: world.x, y: world.y - 12 }, { variant: 'plain' });
     }
   };
 

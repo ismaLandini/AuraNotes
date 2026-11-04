@@ -48,24 +48,35 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-if ('serviceWorker' in navigator && import.meta.env.PROD && !isDesktop()) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('./sw.js')
-      .then((reg) => {
-        reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                console.log('AuraNotes: nuova versione disponibile.');
-              }
-            });
-          }
+if ('serviceWorker' in navigator) {
+  if (isDesktop()) {
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const reg of registrations) void reg.unregister();
+    }).catch(() => undefined);
+    if (typeof caches !== 'undefined') {
+      caches.keys().then((keys) => {
+        for (const k of keys) void caches.delete(k);
+      }).catch(() => undefined);
+    }
+  } else if (import.meta.env.PROD) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('./sw.js')
+        .then((reg) => {
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (newWorker) {
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  console.log('AuraNotes: nuova versione disponibile.');
+                }
+              });
+            }
+          });
+        })
+        .catch((err) => {
+          console.warn('AuraNotes Service Worker registration failed:', err);
         });
-      })
-      .catch((err) => {
-        console.warn('AuraNotes Service Worker registration failed:', err);
-      });
-  });
+    });
+  }
 }

@@ -108,6 +108,18 @@ export function buildShortcuts(): ShortcutDef[] {
         useUI.getState().set({ exportOpen: true });
       },
     },
+    {
+      id: 'print-notebook',
+      keys: ['mod+alt+p'],
+      label: 'Esporta intero quaderno in PDF',
+      category: 'Pagine e blocchi',
+      scope: 'global',
+      run: () => {
+        const nbId = useStore.getState().notebookId;
+        if (!nbId) return false;
+        useUI.getState().set({ exportOpen: true, exportInitialScope: 'notebook', exportNotebookId: nbId });
+      },
+    },
     { id: 'zoom-in', keys: ['mod+plus'], label: 'Ingrandisci', category: 'Zoom e vista', scope: 'global', run: () => (hasPage() ? zoomAt(1.2) : false) },
     { id: 'zoom-out', keys: ['mod+minus'], label: 'Riduci', category: 'Zoom e vista', scope: 'global', run: () => (hasPage() ? zoomAt(1 / 1.2) : false) },
     { id: 'zoom-reset', keys: ['mod+0'], label: 'Zoom 100%', category: 'Zoom e vista', scope: 'global', run: () => (hasPage() ? resetZoom() : false) },

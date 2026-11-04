@@ -25,7 +25,15 @@ export interface DesktopBridge {
 }
 
 function hasTauriInternals(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  if (typeof window === 'undefined') return false;
+  return (
+    '__TAURI_INTERNALS__' in window ||
+    '__TAURI__' in window ||
+    window.location.protocol === 'tauri:' ||
+    window.location.protocol === 'app:' ||
+    window.location.protocol === 'asset:' ||
+    document.documentElement.classList.contains('is-desktop')
+  );
 }
 
 const tauriBridge: DesktopBridge = {
@@ -119,6 +127,13 @@ function runMenu(cmd: string) {
     case 'export-pdf':
       if (st.pageId) ui.set({ exportOpen: true });
       break;
+    case 'export-notebook-pdf': {
+      const nbId = st.notebookId;
+      if (nbId) {
+        ui.set({ exportOpen: true, exportInitialScope: 'notebook', exportNotebookId: nbId });
+      }
+      break;
+    }
     case 'settings':
       ui.set({ settingsOpen: true });
       break;

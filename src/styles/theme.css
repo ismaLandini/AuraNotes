@@ -161,12 +161,12 @@ body {
   background: var(--field);
 }
 .window-titlebar {
-  height: 36px;
-  min-height: 36px;
+  height: 38px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px 0 12px;
+  padding: 0 12px 0 84px;
   background: var(--field);
   color: var(--menu-ink-muted);
   font-size: 13px;
@@ -177,6 +177,7 @@ body {
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
+html.is-desktop .window-titlebar,
 .window-titlebar.is-desktop {
   padding-left: 84px;
 }
@@ -187,7 +188,7 @@ body {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin-left: 8px;
+  margin-left: 6px;
   line-height: 1;
   -webkit-app-region: drag;
 }

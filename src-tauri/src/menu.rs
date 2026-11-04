@@ -8,6 +8,7 @@ pub const MENU_COMMANDS: &[&str] = &[
     "new-page",
     "import-pdf",
     "export-pdf",
+    "export-notebook-pdf",
     "export-backup",
     "import-backup",
     "search",
@@ -68,6 +69,13 @@ pub fn build_italian_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
         true,
         Some("CmdOrCtrl+P"),
     )?;
+    let export_notebook_pdf = MenuItem::with_id(
+        app,
+        "export-notebook-pdf",
+        "Esporta quaderno in PDF…",
+        true,
+        Some("CmdOrCtrl+Alt+P"),
+    )?;
     let export_backup = MenuItem::with_id(app, "export-backup", "Esporta backup…", true, None::<&str>)?;
     let import_backup = MenuItem::with_id(app, "import-backup", "Importa backup…", true, None::<&str>)?;
     let open_backups = MenuItem::with_id(
@@ -88,6 +96,7 @@ pub fn build_italian_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
             &import_pdf,
             &sep()?,
             &export_pdf,
+            &export_notebook_pdf,
             &sep()?,
             &export_backup,
             &import_backup,
@@ -182,6 +191,7 @@ mod tests {
             "new-page",
             "import-pdf",
             "export-pdf",
+            "export-notebook-pdf",
             "export-backup",
             "import-backup",
             "search",

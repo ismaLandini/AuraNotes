@@ -2,6 +2,20 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      try {
+        if (
+          window.location.protocol === 'tauri:' ||
+          window.location.protocol === 'app:' ||
+          window.location.protocol === 'asset:' ||
+          '__TAURI_INTERNALS__' in window ||
+          '__TAURI__' in window ||
+          navigator.userAgent.includes('Tauri')
+        ) {
+          document.documentElement.classList.add('is-desktop');
+        }
+      } catch (e) {}
+    </script>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="apple-touch-icon" href="./favicon.svg" />
     <link rel="manifest" href="./manifest.webmanifest" />

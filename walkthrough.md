@@ -1,26 +1,27 @@
-# Walkthrough — Motore PDF leggero e migrazione a Tauri 2
+# Walkthrough — Aggiornamento AuraNotes: Traffic Lights, Doppio Click e Stampa Quaderno
 
-## Parte A — PDF vettoriali on-demand
-- Nel database si salva solo il PDF originale (deduplicato SHA-256); nessun PNG/WebP per pagina.
-- Le pagine sono rese da pdf.js in `OffscreenCanvas`, con cache LRU in memoria da 150 MB (`src/pdf/pageCache.ts`), risoluzione `larghezza × DPR × 1.5` a scaglioni di 256 px. Stampa/esportazione a 300 DPI.
-- Corretto `detectCanvasLimits` per WKWebView.
-- Rimossi i selettori qualità/formato dall'import (dialogo di importazione).
-- I vecchi PDF raster vengono eliminati all'avvio (`src/storage/legacyCleanup.ts`, con backup preventivo in IndexedDB) e gli asset orfani ripuliti.
-- Verifica: `many-105-pages.pdf` occupa 1 solo asset, < 1.3× la dimensione del file.
+## 1. Ricalibrazione dei Tre Pallini macOS (Traffic Lights)
+- **Coordinate native**: in `src-tauri/tauri.conf.json`, `trafficLightPosition` è stato ricalibrato a `{ "x": 16, "y": 12 }` (rispetto a `{ "x": 12, "y": 9 }` precedente).
+- **Barra del titolo**: in `src/styles/theme.css`, l'altezza di `.window-titlebar` è stata elevata da 28px a 36px, con `padding-left: 84px` in modalità desktop e il testo `AuraNotes` allineato verticalmente al centro. I pallini ora hanno respiro dai bordi della finestra e sono complanari con il titolo e con il breadcrumb.
 
-## Parte B — Electron → Tauri 2 (macOS Apple Silicon)
-- Nuovo crate `src-tauri/`: backup automatici (20 file a rotazione), apertura cartella backup, chiusura con flush (timeout 5 s), menu italiano nativo, stato finestra e tema, titlebar overlay, link esterni nel browser, migrazione dati GlassNotes → AuraNotes.
-- `src/desktop.ts` usa `@tauri-apps/api` mantenendo la compatibilità con `DesktopBridge`; service worker disattivato nell'app; font KaTeX `.ttf`/`.woff` esclusi dalla build.
-- Esportazione PDF: apre la finestra di stampa nativa di macOS ("Salva come PDF"), come concordato.
-- Rimossi `desktop/`, `e2e-desktop/`, `scripts/`, `electron`, `@electron/packager`.
+## 2. Doppio Click su Foto, PDF e Contenitori
+- In `src/canvas/Canvas.tsx`, `onDoubleClick` rileva se il doppio click avviene sopra un'immagine o pagina PDF (inclusi blocchi `.image-block-container`, `.image-item`, `img` o container liberi `freeImage`).
+- Viene creata immediatamente una nuova casella di testo classica (`NoteContainerItem` via `createTextBlock`) posizionata esattamente nel punto del click, aggiunta in cima alla sequenza visiva (z-index) ed entrando subito in modalità editing, permettendo di annotare o prendere appunti sopra il PDF/foto come su carta.
+- Se il doppio click avviene sul testo di un blocco esistente, si apre la consueta modifica del testo di quel blocco.
 
-## Risultati
+## 3. Stampa ed Esportazione Intero Quaderno in Singolo PDF
+- **Stato UI**: `src/store/ui.ts` supporta `exportInitialScope: 'notebook'` ed `exportNotebookId`.
+- **Menu contestuale Quaderno**: aggiunta l'azione *"Esporta quaderno in PDF…"* nel menu con il tasto destro / ⋯ sia nella barra laterale (`src/components/Sidebar.tsx`) che nella schermata Home (`src/components/HomeView.tsx`).
+- **Organizzazione pagine**: all'apertura del dialogo con lo scope quaderno, tutte le pagine di tutte le sezioni del quaderno vengono caricate in sequenza. Ciascuna pagina del quaderno inizia tassativamente su una nuova pagina del PDF grazie a `page-break-after: always` e al layout indipendente generato per ciascuna pagina in `layoutForPage` / `Sheets`. Se una singola pagina del quaderno è molto estesa verticalmente, prosegue con le sue fette (`segue`), mentre la pagina successiva del quaderno riprende da un foglio pulito.
+- **Titolo documento**: in `src/components/ExportDialog.tsx`, quando lo scope è `notebook`, il nome predefinito del PDF assume automaticamente il nome del quaderno.
+
+## Risultati dei Test e Build
 | Controllo | Esito |
 |---|---|
-| `npm run check` (typecheck, lint, Vitest, build) | OK |
-| Playwright E2E | 20/20 |
-| `cargo test` | 9/9 |
-| `cargo clippy -D warnings` | 0 avvisi |
-| `AuraNotes.app` (release, firmata ad-hoc) | **6,03 MiB** (Electron: ~200 MB) |
-
-Nota: l'identifier `it.auranotes.app` termina in `.app`; Tauri lo segnala come sconsigliato (solo un warning).
+| `npm run typecheck` | 0 errori |
+| `npm run lint` (oxlint) | 0 avvisi, 0 errori |
+| Vitest (27 suite) | 260 su 260 passati |
+| Vite production build | OK |
+| Playwright E2E (20 test) | 20 su 20 passati |
+| Build release Tauri | `AuraNotes.app` (6.03 MiB) compilato e firmato ad-hoc |
+| Applicazione installata | Aggiornata in `/Applications/AuraNotes.app` |

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, ChevronLeft, ChevronRight, Copy, FileText, FolderInput, Hash, Layers, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Star, Tag, Trash2 } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, Copy, FileDown, FileText, FolderInput, Hash, Layers, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Star, Tag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { askText, confirmDanger, toast, useUI } from '../store/ui';
@@ -356,6 +356,15 @@ function NotebookList({ onCollapse }: { onCollapse: () => void }) {
               label: ws.notebooks[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
               icon: <Star size={14} />,
               onClick: () => useStore.getState().mutateWorkspace((w) => W.toggleNotebookStar(w, menu.id)),
+            },
+            {
+              label: 'Esporta quaderno in PDF…',
+              icon: <FileDown size={14} />,
+              onClick: () => {
+                const nbId = menu.id;
+                useStore.getState().selectNotebook(nbId);
+                useUI.getState().set({ exportOpen: true, exportInitialScope: 'notebook', exportNotebookId: nbId });
+              },
             },
             { label: 'Rinomina', icon: <Pencil size={14} />, onClick: () => rename(menu.id) },
             { label: 'Colore', icon: <Palette size={14} />, submenu: colorSubmenu((c) => useStore.getState().mutateWorkspace((w) => W.setNotebookColor(w, menu.id, c))) },

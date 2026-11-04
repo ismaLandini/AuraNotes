@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChevronRight,
   Clock,
+  FileDown,
   FileText,
   FolderPlus,
   Hash,
@@ -963,6 +964,15 @@ export function HomeView() {
           onClose={() => setMenu(null)}
           items={[
             { label: 'Apri quaderno', icon: <BookOpen size={14} />, onClick: () => openNotebookFolder(menu.id) },
+            {
+              label: 'Esporta quaderno in PDF…',
+              icon: <FileDown size={14} />,
+              onClick: () => {
+                const nbId = menu.id;
+                useStore.getState().selectNotebook(nbId);
+                useUI.getState().set({ exportOpen: true, exportInitialScope: 'notebook', exportNotebookId: nbId, homeOpen: false });
+              },
+            },
             {
               label: ws.notebooks[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
               icon: <Star size={14} />,

@@ -21,11 +21,12 @@ function loadOpts(): PrintOptions {
   }
 }
 
-export function useScopePages(scope: Scope, picked: ID[]): ID[] {
+export function useScopePages(scope: Scope, picked: ID[], customNotebookId?: ID | null): ID[] {
   const ws = useStore((s) => s.workspace);
   const pageId = useStore((s) => s.pageId);
   const sectionId = useStore((s) => s.sectionId);
-  const notebookId = useStore((s) => s.notebookId);
+  const storeNotebookId = useStore((s) => s.notebookId);
+  const notebookId = customNotebookId ?? storeNotebookId;
   return useMemo(() => {
     if (scope === 'page') return pageId ? [pageId] : [];
     if (scope === 'selected') return (sectionId ? ws.sections[sectionId].pageIds : []).filter((p) => picked.includes(p));
@@ -42,15 +43,19 @@ export function ExportDialog() {
 }
 
 function ExportDialogInner() {
-  const close = () => useUI.getState().set({ exportOpen: false });
+  const close = () => useUI.getState().set({ exportOpen: false, exportInitialScope: undefined, exportNotebookId: null });
+  const initialScope = useUI((s) => s.exportInitialScope);
+  const targetNotebookId = useUI((s) => s.exportNotebookId);
   const ws = useStore((s) => s.workspace);
   const sectionId = useStore((s) => s.sectionId);
   const pageId = useStore((s) => s.pageId);
+  const storeNotebookId = useStore((s) => s.notebookId);
+  const notebookId = targetNotebookId ?? storeNotebookId;
   const settings = useSettings();
   const [opts, setOpts] = useState<PrintOptions>(loadOpts);
-  const [scope, setScope] = useState<Scope>('page');
+  const [scope, setScope] = useState<Scope>(() => initialScope ?? 'page');
   const [picked, setPicked] = useState<ID[]>(pageId ? [pageId] : []);
-  const ids = useScopePages(scope, picked);
+  const ids = useScopePages(scope, picked, notebookId);
   const [pages, setPages] = useState<PrintPage[] | null>(null);
   const [loadedFor, setLoadedFor] = useState<string>('');
   const [busy, setBusy] = useState(false);
@@ -82,9 +87,10 @@ function ExportDialogInner() {
 
   const docTitle = useMemo(() => {
     if (scope === 'page' && pageId) return ws.pages[pageId]?.title ?? 'AuraNotes';
-    if (sectionId) return ws.sections[sectionId]?.name ?? 'AuraNotes';
+    if (scope === 'section' && sectionId) return ws.sections[sectionId]?.name ?? 'AuraNotes';
+    if (scope === 'notebook' && notebookId) return ws.notebooks[notebookId]?.name ?? 'AuraNotes';
     return 'AuraNotes';
-  }, [scope, pageId, sectionId, ws]);
+  }, [scope, pageId, sectionId, notebookId, ws]);
 
   const job: PrintJob | null = activePages
     ? {

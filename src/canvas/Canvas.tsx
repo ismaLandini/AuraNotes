@@ -1229,9 +1229,20 @@ export function Canvas() {
     if (!cur) return;
     const world = toWorld(e.clientX, e.clientY);
     const hit = hitAt(cur, world, 6 / getVp().zoom);
-    if (hit?.type === 'text' || hit?.type === 'container') enterEdit(hit.id, e.clientX, e.clientY);
-    else if (!hit) startCreateText(world, 'plain', null);
-    else if (hit.type === 'image') startCreateText(world, 'plain', hit);
+
+    const isImageOrPdf = Boolean(
+      target.closest('.image-block-container, .image-block-wrapper, [data-testid="image-block"], img, .image-item, [data-image-block-id]') ||
+      (hit?.type === 'container' && (hit as NoteContainerItem).freeImage) ||
+      hit?.type === 'image'
+    );
+
+    if (isImageOrPdf) {
+      createTextBlock({ x: world.x, y: world.y - 12 }, { variant: 'plain' });
+    } else if (hit?.type === 'text' || hit?.type === 'container') {
+      enterEdit(hit.id, e.clientX, e.clientY);
+    } else {
+      startCreateText(world, 'plain', null);
+    }
   };
 
   // ---------------------------------------------------------------- drag & drop of files & blocks

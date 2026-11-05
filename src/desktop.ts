@@ -127,6 +127,13 @@ function runMenu(cmd: string) {
     case 'export-pdf':
       if (st.pageId) ui.set({ exportOpen: true });
       break;
+    case 'export-section-pdf': {
+      const secId = st.sectionId;
+      if (secId) {
+        ui.set({ exportOpen: true, exportInitialScope: 'section', exportSectionId: secId });
+      }
+      break;
+    }
     case 'export-notebook-pdf': {
       const nbId = st.notebookId;
       if (nbId) {

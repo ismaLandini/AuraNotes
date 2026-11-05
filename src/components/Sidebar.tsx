@@ -477,6 +477,15 @@ function SectionList({ onCollapse }: { onCollapse: () => void }) {
               icon: <Star size={14} />,
               onClick: () => useStore.getState().mutateWorkspace((w) => W.toggleSectionStar(w, menu.id)),
             },
+            {
+              label: 'Esporta sezione in PDF…',
+              icon: <FileDown size={14} />,
+              onClick: () => {
+                const secId = menu.id;
+                useStore.getState().selectSection(secId);
+                useUI.getState().set({ exportOpen: true, exportInitialScope: 'section', exportSectionId: secId });
+              },
+            },
             { label: 'Rinomina', icon: <Pencil size={14} />, onClick: () => rename(menu.id) },
             { label: 'Colore', icon: <Palette size={14} />, submenu: colorSubmenu((c) => useStore.getState().mutateWorkspace((w) => W.setSectionColor(w, menu.id, c))) },
             { label: 'Elimina', icon: <Trash2 size={14} />, danger: true, onClick: () => remove(menu.id) },

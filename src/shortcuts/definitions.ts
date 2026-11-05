@@ -109,6 +109,18 @@ export function buildShortcuts(): ShortcutDef[] {
       },
     },
     {
+      id: 'print-section',
+      keys: ['mod+shift+alt+p'],
+      label: 'Esporta intera sezione in PDF',
+      category: 'Pagine e blocchi',
+      scope: 'global',
+      run: () => {
+        const secId = useStore.getState().sectionId;
+        if (!secId) return false;
+        useUI.getState().set({ exportOpen: true, exportInitialScope: 'section', exportSectionId: secId });
+      },
+    },
+    {
       id: 'print-notebook',
       keys: ['mod+alt+p'],
       label: 'Esporta intero quaderno in PDF',

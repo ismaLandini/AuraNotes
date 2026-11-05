@@ -43,6 +43,7 @@ interface UIState {
   exportOpen: boolean;
   exportInitialScope?: 'page' | 'selected' | 'section' | 'notebook';
   exportNotebookId?: string | null;
+  exportSectionId?: string | null;
   trashOpen: boolean;
   pdfDialogOpen: boolean;
   templatePickerOpen: boolean;
@@ -64,6 +65,7 @@ export const useUI = create<UIState>((set) => ({
   exportOpen: false,
   exportInitialScope: undefined,
   exportNotebookId: null,
+  exportSectionId: null,
   trashOpen: false,
   pdfDialogOpen: false,
   templatePickerOpen: false,

@@ -996,6 +996,15 @@ export function HomeView() {
           items={[
             { label: 'Apri sezione', icon: <BookOpen size={14} />, onClick: () => openSectionBook(menu.id) },
             {
+              label: 'Esporta sezione in PDF…',
+              icon: <FileDown size={14} />,
+              onClick: () => {
+                const secId = menu.id;
+                useStore.getState().selectSection(secId);
+                useUI.getState().set({ exportOpen: true, exportInitialScope: 'section', exportSectionId: secId, homeOpen: false });
+              },
+            },
+            {
               label: ws.sections[menu.id].starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti',
               icon: <Star size={14} />,
               onClick: () => useStore.getState().mutateWorkspace((w) => W.toggleSectionStar(w, menu.id)),

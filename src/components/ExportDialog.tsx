@@ -21,18 +21,19 @@ function loadOpts(): PrintOptions {
   }
 }
 
-export function useScopePages(scope: Scope, picked: ID[], customNotebookId?: ID | null): ID[] {
+export function useScopePages(scope: Scope, picked: ID[], customNotebookId?: ID | null, customSectionId?: ID | null): ID[] {
   const ws = useStore((s) => s.workspace);
   const pageId = useStore((s) => s.pageId);
-  const sectionId = useStore((s) => s.sectionId);
+  const storeSectionId = useStore((s) => s.sectionId);
+  const sectionId = customSectionId ?? storeSectionId;
   const storeNotebookId = useStore((s) => s.notebookId);
   const notebookId = customNotebookId ?? storeNotebookId;
   return useMemo(() => {
     if (scope === 'page') return pageId ? [pageId] : [];
-    if (scope === 'selected') return (sectionId ? ws.sections[sectionId].pageIds : []).filter((p) => picked.includes(p));
-    if (scope === 'section') return sectionId ? ws.sections[sectionId].pageIds : [];
+    if (scope === 'selected') return (sectionId && ws.sections[sectionId] ? ws.sections[sectionId].pageIds : []).filter((p) => picked.includes(p));
+    if (scope === 'section') return sectionId && ws.sections[sectionId] ? ws.sections[sectionId].pageIds : [];
     const nb = notebookId ? ws.notebooks[notebookId] : null;
-    return nb ? nb.sectionIds.flatMap((s) => ws.sections[s].pageIds) : [];
+    return nb ? nb.sectionIds.flatMap((s) => ws.sections[s]?.pageIds ?? []) : [];
   }, [scope, picked, ws, pageId, sectionId, notebookId]);
 }
 
@@ -43,11 +44,13 @@ export function ExportDialog() {
 }
 
 function ExportDialogInner() {
-  const close = () => useUI.getState().set({ exportOpen: false, exportInitialScope: undefined, exportNotebookId: null });
+  const close = () => useUI.getState().set({ exportOpen: false, exportInitialScope: undefined, exportNotebookId: null, exportSectionId: null });
   const initialScope = useUI((s) => s.exportInitialScope);
   const targetNotebookId = useUI((s) => s.exportNotebookId);
+  const targetSectionId = useUI((s) => s.exportSectionId);
   const ws = useStore((s) => s.workspace);
-  const sectionId = useStore((s) => s.sectionId);
+  const storeSectionId = useStore((s) => s.sectionId);
+  const sectionId = targetSectionId ?? storeSectionId;
   const pageId = useStore((s) => s.pageId);
   const storeNotebookId = useStore((s) => s.notebookId);
   const notebookId = targetNotebookId ?? storeNotebookId;
@@ -55,7 +58,7 @@ function ExportDialogInner() {
   const [opts, setOpts] = useState<PrintOptions>(loadOpts);
   const [scope, setScope] = useState<Scope>(() => initialScope ?? 'page');
   const [picked, setPicked] = useState<ID[]>(pageId ? [pageId] : []);
-  const ids = useScopePages(scope, picked, notebookId);
+  const ids = useScopePages(scope, picked, notebookId, sectionId);
   const [pages, setPages] = useState<PrintPage[] | null>(null);
   const [loadedFor, setLoadedFor] = useState<string>('');
   const [busy, setBusy] = useState(false);

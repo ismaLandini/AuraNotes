@@ -125,6 +125,79 @@ pub fn open_external(url: String) -> Result<(), String> {
     Ok(())
 }
 
+pub fn decode_clipboard_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[tauri::command]
+pub fn read_clipboard_text() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/usr/bin/pbpaste")
+            .args(["-Prefer", "txt"])
+            .env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8")
+            .output()
+            .map_err(|e| format!("Impossibile leggere gli appunti: {e}"))?;
+        if !output.status.success() {
+            return Err("Lettura degli appunti non riuscita".to_string());
+        }
+        Ok(decode_clipboard_bytes(&output.stdout))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(String::new())
+    }
+}
+
+pub fn compute_snap_rect(
+    area_x: i32,
+    area_y: i32,
+    area_w: u32,
+    area_h: u32,
+    direction: &str,
+) -> Result<(i32, i32, u32, u32), String> {
+    let half_w = (area_w / 2).max(1);
+    let half_h = (area_h / 2).max(1);
+    match direction {
+        "left" => Ok((area_x, area_y, half_w, area_h)),
+        "right" => Ok((area_x + half_w as i32, area_y, area_w.saturating_sub(half_w), area_h)),
+        "top" => Ok((area_x, area_y, area_w, half_h)),
+        "bottom" => Ok((area_x, area_y + half_h as i32, area_w, area_h.saturating_sub(half_h))),
+        "fill" => Ok((area_x, area_y, area_w, area_h)),
+        _ => Err(format!("Direzione finestra non valida: {direction}")),
+    }
+}
+
+#[tauri::command]
+pub fn snap_window(window: WebviewWindow, direction: String) -> Result<(), String> {
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    }
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| format!("Impossibile rilevare il monitor corrente: {e}"))?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Nessun monitor disponibile".to_string())?;
+
+    let work = monitor.work_area();
+    let (x, y, w, h) = compute_snap_rect(
+        work.position.x,
+        work.position.y,
+        work.size.width,
+        work.size.height,
+        &direction,
+    )?;
+
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| format!("Impossibile spostare la finestra: {e}"))?;
+    window
+        .set_size(tauri::PhysicalSize::new(w, h))
+        .map_err(|e| format!("Impossibile ridimensionare la finestra: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +210,21 @@ mod tests {
         assert!(!is_allowed_external_url("file:///etc/passwd"));
         assert!(!is_allowed_external_url("javascript:alert(1)"));
         assert!(!is_allowed_external_url(""));
+    }
+
+    #[test]
+    fn test_decode_clipboard_bytes_utf8() {
+        assert_eq!(decode_clipboard_bytes("Caffè e più €".as_bytes()), "Caffè e più €");
+        assert_eq!(decode_clipboard_bytes(b""), "");
+    }
+
+    #[test]
+    fn test_compute_snap_rect() {
+        assert_eq!(compute_snap_rect(0, 25, 1440, 875, "left").unwrap(), (0, 25, 720, 875));
+        assert_eq!(compute_snap_rect(0, 25, 1440, 875, "right").unwrap(), (720, 25, 720, 875));
+        assert_eq!(compute_snap_rect(0, 25, 1440, 875, "top").unwrap(), (0, 25, 1440, 437));
+        assert_eq!(compute_snap_rect(0, 25, 1440, 875, "bottom").unwrap(), (0, 462, 1440, 438));
+        assert_eq!(compute_snap_rect(0, 25, 1440, 875, "fill").unwrap(), (0, 25, 1440, 875));
+        assert!(compute_snap_rect(0, 25, 1440, 875, "invalid").is_err());
     }
 }

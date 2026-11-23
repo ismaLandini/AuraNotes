@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import type { Viewport } from '../types';
-import { PAGE_WIDTH, SHEET_TOP, TWO_A4_HEIGHT } from '../lib/page';
-import { getViewport, setVp } from './viewport';
+import { PAGE_WIDTH } from '../lib/page';
+import { computeViewportBounds, getViewport, setVp } from './viewport';
+import { useStore } from '../store/useStore';
 
 /**
  * Draggable scrollbars with smooth tracking, non-sticking incremental drag,
@@ -23,19 +24,16 @@ export function ScrollBars({
   bottom: number;
 }) {
   const drag = useRef<{ axis: 'x' | 'y'; lastPos: number; scale: number } | null>(null);
+  const page = useStore((s) => (s.pageId ? s.pages[s.pageId] : null));
   const vw = width / vp.zoom;
   const vh = height / vp.zoom;
 
   // Viewport bounds aligned strictly with clampViewport
-  const minX = left - 8 / vp.zoom;
-  const totalW = right - left;
-  const maxX = totalW <= vw ? minX : Math.max(minX, right - vw + 24 / vp.zoom);
+  const { minX, maxX, minY, maxY } = computeViewportBounds(vw, vh, vp.zoom, bottom, page);
   const availTravelX = Math.max(0, maxX - minX);
-
-  const minY = SHEET_TOP - 16 / vp.zoom;
-  const pageBottom = Math.max(bottom, SHEET_TOP + TWO_A4_HEIGHT);
-  const maxY = Math.max(minY, pageBottom - vh + 160 / vp.zoom);
   const availTravelY = Math.max(0, maxY - minY);
+  void left;
+  void right;
 
   // Tracks leave 28px corner space to prevent intersecting or glitching
   const trackW = Math.max(60, width - 28);

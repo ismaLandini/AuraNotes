@@ -3,10 +3,28 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
 import { useStore } from './store/useStore';
 import { useUI } from './store/ui';
+import { createTextBlock } from './canvas/actions';
+import { useActiveEditor } from './editor/activeEditor';
+import * as W from './model/workspaceOps';
 
 describe('App', () => {
   beforeEach(() => {
-    useUI.getState().set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: null });
+    useUI.getState().set({
+      homeOpen: true,
+      homeTab: 'notebooks',
+      homeNotebookId: null,
+      homeSectionId: null,
+      navHistory: [],
+      confirm: null,
+      prompt: null,
+      searchOpen: false,
+      settingsOpen: false,
+      shortcutsOpen: false,
+      exportOpen: false,
+      trashOpen: false,
+      pdfDialogOpen: false,
+      templatePickerOpen: false,
+    });
   });
 
   it('starts on the Goodnotes-style Home screen showing Quaderni as folders, opens Sezioni as books, and navigates to the workspace', async () => {
@@ -26,7 +44,12 @@ describe('App', () => {
     const firstSectionBook = screen.getByRole('button', { name: 'Sezione Per iniziare' });
     fireEvent.click(firstSectionBook);
 
-    // Opens the workspace on the last page of that section ("Scorciatoie essenziali")
+    // Now inside the section, pages are shown as Goodnotes-style document cards
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+    const firstPageCard = await screen.findByTestId('home-page-Scorciatoie essenziali');
+    fireEvent.click(firstPageCard);
+
+    // Opens the workspace on that page ("Scorciatoie essenziali")
     expect(await screen.findByLabelText('Navigazione')).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText('Scorciatoie essenziali').length).toBeGreaterThan(0));
     expect(screen.getByTestId('canvas')).toBeInTheDocument();
@@ -38,18 +61,23 @@ describe('App', () => {
     expect(await screen.findByTestId('home-view')).toBeInTheDocument();
   });
 
-  it('creates a new page automatically when clicking a newly created empty section in Home', async () => {
+  it('navigates to Section Pages level in Home when clicking a section, allowing adding pages', async () => {
     render(<App />);
     await screen.findByTestId('home-view');
     const nbId = useStore.getState().workspace.notebookIds[0];
     const newSecId = useStore.getState().createSectionInHome(nbId, 'Sezione Vuota');
     expect(useStore.getState().workspace.sections[newSecId].pageIds).toHaveLength(0);
 
-    // Open notebook folder in Home, then click the empty section book
+    // Open notebook folder in Home, then click the section book to view its Pages
     fireEvent.click(screen.getByRole('button', { name: /^Quaderno / }));
     fireEvent.click(await screen.findByTestId('home-section-Sezione Vuota'));
 
-    // Should create a page in the empty section and open the workspace
+    // Should navigate to section pages level in Home
+    expect(useUI.getState().homeSectionId).toBe(newSecId);
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+
+    // Clicking "Nuova pagina" in the section creates a page and opens the workspace
+    fireEvent.click(screen.getByTestId('home-new-page-card'));
     await waitFor(() => expect(useUI.getState().homeOpen).toBe(false));
     expect(useStore.getState().sectionId).toBe(newSecId);
     expect(useStore.getState().workspace.sections[newSecId].pageIds.length).toBe(1);
@@ -79,9 +107,39 @@ describe('App', () => {
     expect(nextVp.y).toBeGreaterThan(initialVp ? initialVp.y : -200);
   });
 
+  it('scrolls toolbar horizontally only on deltaX and does not scroll canvas sheets when wheeling over the ribbon', async () => {
+    useUI.getState().set({ homeOpen: false });
+    const { container } = render(<App />);
+    const ribbon = container.querySelector('.ribbon') as HTMLElement;
+    const ribbonTools = container.querySelector('.ribbon-tools') as HTMLElement;
+    expect(ribbon).toBeInTheDocument();
+    expect(ribbonTools).toBeInTheDocument();
+
+    Object.defineProperty(ribbonTools, 'scrollWidth', { value: 1200, configurable: true });
+    Object.defineProperty(ribbonTools, 'clientWidth', { value: 600, configurable: true });
+
+    const pid = useStore.getState().pageId!;
+    const initialVp = { ...useStore.getState().viewports[pid] };
+
+    fireEvent.wheel(ribbon, { deltaX: 0, deltaY: 100 });
+    expect(ribbonTools.scrollLeft).toBe(0);
+
+    let currentVp = useStore.getState().viewports[pid];
+    expect(currentVp.x).toBe(initialVp.x);
+    expect(currentVp.y).toBe(initialVp.y);
+
+    fireEvent.wheel(ribbon, { deltaX: 100, deltaY: 0 });
+    expect(ribbonTools.scrollLeft).toBe(100);
+
+    currentVp = useStore.getState().viewports[pid];
+    expect(currentVp.x).toBe(initialVp.x);
+    expect(currentVp.y).toBe(initialVp.y);
+  });
+
   it('opens the shortcut reference from the toolbar', async () => {
     useUI.getState().set({ homeOpen: false });
     render(<App />);
+    fireEvent.click(await screen.findByTestId('ribbon-utilities-btn'));
     const btn = await screen.findAllByRole('button', { name: 'Scorciatoie da tastiera' });
     fireEvent.click(btn[0]);
     expect(await screen.findByTestId('shortcuts-overlay')).toBeInTheDocument();
@@ -97,7 +155,8 @@ describe('App', () => {
     expect(screen.getByTestId('canvas')).toBeInTheDocument();
     expect(screen.getByTestId('toggle-sidebar')).toBeInTheDocument();
     expect(screen.getByTestId('save-status')).toBeInTheDocument();
-    expect(screen.getByTestId('open-export')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('ribbon-utilities-btn'));
+    expect(await screen.findByTestId('open-export')).toBeInTheDocument();
   });
 
   it('toggles navigation sidebar from the dedicated minimenu above the tool palette', async () => {
@@ -108,5 +167,294 @@ describe('App', () => {
     fireEvent.click(toggle);
     // After click, sidebarVisible is toggled
     fireEvent.click(toggle);
+  });
+
+  it('inserts inline and block equations into an active text block without ending editing on prompt', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    const blockId = createTextBlock({ x: 80, y: 120 });
+    expect(blockId).toBeTruthy();
+
+    // Open Equation popover and click "Equazione in linea"
+    const eqTrigger = await screen.findByRole('button', { name: 'Equazione' });
+    fireEvent.click(eqTrigger);
+    const inlineBtn = await screen.findByRole('button', { name: 'Equazione in linea' });
+    fireEvent.click(inlineBtn);
+
+    const inputInline = await screen.findByTestId('prompt-input');
+    expect(useStore.getState().editingId).toBe(blockId);
+    fireEvent.change(inputInline, { target: { value: 'a^2 + b^2 = c^2' } });
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    await waitFor(() => {
+      const page = useStore.getState().currentPage()!;
+      const item = page.items[blockId!] as { doc?: unknown };
+      expect(JSON.stringify(item.doc)).toContain('mathInline');
+      expect(JSON.stringify(item.doc)).toContain('a^2 + b^2 = c^2');
+    });
+
+    // Now insert a block equation in the same editing session
+    fireEvent.click(screen.getByRole('button', { name: 'Equazione' }));
+    const blockBtn = await screen.findByRole('button', { name: 'Equazione a blocco' });
+    fireEvent.click(blockBtn);
+
+    const inputBlock = await screen.findByTestId('prompt-input');
+    expect(useStore.getState().editingId).toBe(blockId);
+    fireEvent.change(inputBlock, { target: { value: '\\int_0^1 x\\,dx' } });
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    await waitFor(() => {
+      const page = useStore.getState().currentPage()!;
+      const item = page.items[blockId!] as { doc?: unknown };
+      expect(JSON.stringify(item.doc)).toContain('mathBlock');
+      expect(JSON.stringify(item.doc)).toContain('\\\\int_0^1 x\\\\,dx');
+    });
+  });
+
+  it('creates a new text block when inserting an equation without an active text editor', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    useStore.getState().setEditing(null);
+    const pid = useStore.getState().pageId!;
+    const beforeCount = useStore.getState().pages[pid].order.length;
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione a blocco' }));
+
+    const input = await screen.findByTestId('prompt-input');
+    fireEvent.change(input, { target: { value: 'E = mc^2' } });
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    await waitFor(() => {
+      const page = useStore.getState().pages[pid];
+      expect(page.order.length).toBe(beforeCount + 1);
+      const newId = page.order[page.order.length - 1];
+      const item = page.items[newId] as { doc?: unknown };
+      expect(JSON.stringify(item.doc)).toContain('mathBlock');
+      expect(JSON.stringify(item.doc)).toContain('E = mc^2');
+    });
+  });
+
+  it('strips \\(...\\) and \\[...\\] delimiters when converting selected text to an inline or block equation', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    const blockId = createTextBlock({ x: 80, y: 120 });
+    expect(blockId).toBeTruthy();
+
+    await waitFor(() => expect(useActiveEditor.getState().editor).not.toBeNull());
+    const ed = useActiveEditor.getState().editor!;
+    ed.commands.setContent('<p>\\({q_1, q_2, \\dots, q_n}\\)</p>');
+    ed.commands.selectAll();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione in linea' }));
+
+    const input = (await screen.findByTestId('prompt-input')) as HTMLInputElement;
+    expect(input.value).toBe('{q_1, q_2, \\dots, q_n}');
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    await waitFor(() => {
+      const page = useStore.getState().currentPage()!;
+      const item = page.items[blockId!] as { doc?: unknown };
+      const serialized = JSON.stringify(item.doc);
+      expect(serialized).toContain('mathInline');
+      expect(serialized).toContain('{q_1, q_2, \\\\dots, q_n}');
+      expect(serialized).not.toContain('\\\\(');
+      expect(serialized).not.toContain('\\\\)');
+    });
+  });
+
+  it('keeps editing continuously after inserting inline/block equations and unwraps math formatting back to plain text', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    const blockId = createTextBlock({ x: 80, y: 120 });
+    expect(blockId).toBeTruthy();
+
+    await waitFor(() => expect(useActiveEditor.getState().editor).not.toBeNull());
+    const ed = useActiveEditor.getState().editor!;
+
+    // Insert block equation and verify cursor lands in a trailing paragraph so user can keep typing
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione a blocco' }));
+    const inputBlock = await screen.findByTestId('prompt-input');
+    fireEvent.change(inputBlock, { target: { value: 'a^2 + b^2 = c^2' } });
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    expect(useStore.getState().editingId).toBe(blockId);
+
+    ed.commands.insertContent('Testo continuo');
+    expect(ed.getText()).toContain('Testo continuo');
+
+    // Insert inline equation and unwrap it back to plain text via Equation menu
+    fireEvent.click(screen.getByRole('button', { name: 'Equazione' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Equazione in linea' }));
+    const inputInline = await screen.findByTestId('prompt-input');
+    fireEvent.change(inputInline, { target: { value: '\\alpha + \\beta' } });
+    fireEvent.click(screen.getByTestId('prompt-ok'));
+
+    await waitFor(() => expect(screen.queryByTestId('prompt-dialog')).toBeNull());
+    expect(JSON.stringify(ed.getJSON())).toContain('mathInline');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Equazione' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Rimuovi formattazione matematica' }));
+
+    await waitFor(() => {
+      const json = JSON.stringify(ed.getJSON());
+      expect(json).not.toContain('mathInline');
+      expect(json).toContain('\\\\alpha + \\\\beta');
+    });
+    expect(useStore.getState().editingId).toBe(blockId);
+  });
+
+  it('returns to the previous screen (Pages screen or initial Page) when clicking the Ribbon Back button', async () => {
+    render(<App />);
+    await screen.findByTestId('home-view');
+
+    // Navigate to Quaderno -> Sezione Per iniziare (Pages screen)
+    fireEvent.click(screen.getByRole('button', { name: /^Quaderno / }));
+    fireEvent.click(await screen.findByTestId('home-section-Per iniziare'));
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+    const secId = useUI.getState().homeSectionId;
+    expect(secId).toBeTruthy();
+
+    // Open a page from the Pages screen
+    const firstPageCard = await screen.findByTestId('home-page-Scorciatoie essenziali');
+    fireEvent.click(firstPageCard);
+    await screen.findByTestId('canvas');
+    const firstPageId = useStore.getState().pageId!;
+    expect(useUI.getState().homeOpen).toBe(false);
+
+    // Back button is enabled and returns to the Pages screen
+    const backBtn = screen.getByTestId('ribbon-back-btn');
+    expect(backBtn).not.toBeDisabled();
+    fireEvent.click(backBtn);
+
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+    expect(useUI.getState().homeOpen).toBe(true);
+    expect(useUI.getState().homeSectionId).toBe(secId);
+
+    // Open the first page again, then navigate via wikilink to a second page
+    fireEvent.click(await screen.findByTestId('home-page-Scorciatoie essenziali'));
+    await screen.findByTestId('canvas');
+    const secondPageId = await useStore.getState().navigateWikiLink('Pagina collegata');
+    expect(secondPageId).toBeTruthy();
+    await waitFor(() => expect(useStore.getState().pageId).toBe(secondPageId));
+
+    // Clicking Back returns to the initial page
+    fireEvent.click(screen.getByTestId('ribbon-back-btn'));
+    await waitFor(() => expect(useStore.getState().pageId).toBe(firstPageId));
+    expect(useUI.getState().homeOpen).toBe(false);
+
+    // Clicking Back again returns to the Pages screen, and history is now empty
+    fireEvent.click(screen.getByTestId('ribbon-back-btn'));
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+    expect(useUI.getState().navHistory).toHaveLength(0);
+  });
+
+  it('sorts pages inside a Section in HomeView via the sort filter dropdown', async () => {
+    render(<App />);
+    await screen.findByTestId('home-view');
+    const nbId = useStore.getState().workspace.notebookIds[0];
+    const secId = useStore.getState().createSectionInHome(nbId, 'Sezione Ordinamento');
+    const pZeta = useStore.getState().createPageInHome(secId, 'Zeta')!;
+    const pAlfa = useStore.getState().createPageInHome(secId, 'Alfa')!;
+    const pBeta = useStore.getState().createPageInHome(secId, 'Beta')!;
+
+    useStore.getState().mutateWorkspace((w) => {
+      let next = W.setPageMeta(w, pZeta, { createdAt: 1000, updatedAt: 9000 });
+      next = W.setPageMeta(next, pAlfa, { createdAt: 3000, updatedAt: 2000 });
+      next = W.setPageMeta(next, pBeta, { createdAt: 2000, updatedAt: 5000 });
+      return next;
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Quaderno / }));
+    fireEvent.click(await screen.findByTestId('home-section-Sezione Ordinamento'));
+    const grid = await screen.findByTestId('home-section-pages-grid');
+
+    const cardIds = () =>
+      Array.from(grid.querySelectorAll<HTMLElement>('.home-page-card[data-page-id]')).map((el) => el.dataset.pageId);
+
+    expect(cardIds()).toEqual([pZeta, pAlfa, pBeta]);
+
+    const sortSelect = screen.getByTestId('section-page-sort') as HTMLSelectElement;
+    fireEvent.change(sortSelect, { target: { value: 'title-asc' } });
+    expect(cardIds()).toEqual([pAlfa, pBeta, pZeta]);
+    expect(useStore.getState().workspace.sections[secId].pageSort).toBe('title-asc');
+
+    fireEvent.change(sortSelect, { target: { value: 'title-desc' } });
+    expect(cardIds()).toEqual([pZeta, pBeta, pAlfa]);
+
+    fireEvent.change(sortSelect, { target: { value: 'created-desc' } });
+    expect(cardIds()).toEqual([pAlfa, pBeta, pZeta]);
+
+    fireEvent.change(sortSelect, { target: { value: 'created-asc' } });
+    expect(cardIds()).toEqual([pZeta, pBeta, pAlfa]);
+
+    fireEvent.change(sortSelect, { target: { value: 'updated-desc' } });
+    expect(cardIds()).toEqual([pZeta, pBeta, pAlfa]);
+  });
+
+  it('reorders pages inside a Section in HomeView by press-and-hold dragging a page thumbnail and resets sort to manual', async () => {
+    render(<App />);
+    await screen.findByTestId('home-view');
+    const nbId = useStore.getState().workspace.notebookIds[0];
+    const secId = useStore.getState().createSectionInHome(nbId, 'Sezione Drag');
+    const p1 = useStore.getState().createPageInHome(secId, 'Prima')!;
+    const p2 = useStore.getState().createPageInHome(secId, 'Seconda')!;
+    const p3 = useStore.getState().createPageInHome(secId, 'Terza')!;
+    useStore.getState().mutateWorkspace((w) => W.sortSectionPages(w, secId, 'title-asc'));
+
+    fireEvent.click(screen.getByRole('button', { name: /^Quaderno / }));
+    fireEvent.click(await screen.findByTestId('home-section-Sezione Drag'));
+    const grid = await screen.findByTestId('home-section-pages-grid');
+
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.home-page-card[data-page-id]'));
+    expect(cards).toHaveLength(3);
+
+    cards.forEach((card, idx) => {
+      const left = idx * 180;
+      Object.defineProperty(card, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          left,
+          top: 0,
+          right: left + 160,
+          bottom: 200,
+          width: 160,
+          height: 200,
+          x: left,
+          y: 0,
+          toJSON: () => ({}),
+        }),
+      });
+    });
+
+    // Press and hold on the first card thumbnail to initiate drag without opening the page
+    fireEvent.pointerDown(cards[0], { button: 0, clientX: 80, clientY: 100 });
+    await waitFor(() => expect(screen.getByTestId('home-page-drag-ghost')).toBeInTheDocument());
+
+    // Move pointer over the right half of the third card ('Terza')
+    fireEvent.pointerMove(window, { clientX: 460, clientY: 100 });
+    expect(cards[2]).toHaveClass('drop-after');
+
+    // Drop and simulate trailing synthetic click
+    fireEvent.pointerUp(window, { clientX: 460, clientY: 100 });
+    fireEvent.click(cards[0]);
+
+    expect(useUI.getState().homeOpen).toBe(true);
+    expect(useStore.getState().workspace.sections[secId].pageIds).toEqual([p2, p3, p1]);
+    expect(useStore.getState().workspace.sections[secId].pageSort).toBe('manual');
+
+    const reorderedIds = Array.from(grid.querySelectorAll<HTMLElement>('.home-page-card[data-page-id]')).map((el) => el.dataset.pageId);
+    expect(reorderedIds).toEqual([p2, p3, p1]);
   });
 });

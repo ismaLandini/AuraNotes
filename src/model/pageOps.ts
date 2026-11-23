@@ -1,5 +1,5 @@
 import type { JSONContent } from '@tiptap/core';
-import type { CanvasItem, ID, ImageBlockAttrs, NoteContainerItem, PageContent } from '../types';
+import type { CanvasItem, ID, ImageBlockAttrs, NoteContainerItem, PageContent, SheetDef } from '../types';
 import { SCHEMA_VERSION } from '../types';
 import { newId } from './workspaceOps';
 
@@ -206,7 +206,18 @@ export function extractDocAssets(doc: JSONContent | undefined | null, out: Set<I
 
 export function referencedAssets(page: PageContent): Set<ID> {
   const s = new Set<ID>();
-  if (!page || !page.items || typeof page.items !== 'object') return s;
+  if (!page || typeof page !== 'object') return s;
+  if (typeof page.pdfAssetId === 'string' && page.pdfAssetId) {
+    s.add(page.pdfAssetId);
+  }
+  if (Array.isArray(page.sheets)) {
+    for (const sh of page.sheets) {
+      if (sh && typeof sh.pdfAssetId === 'string' && sh.pdfAssetId) {
+        s.add(sh.pdfAssetId);
+      }
+    }
+  }
+  if (!page.items || typeof page.items !== 'object') return s;
   for (const it of Object.values(page.items)) {
     if (!it) continue;
     if (it.type === 'image' && it.assetId) {
@@ -221,7 +232,7 @@ export function referencedAssets(page: PageContent): Set<ID> {
 }
 
 export function textDocFromPlain(text: string): JSONContent {
-  const paras = text.split(/\r?\n/);
+  const paras = text.split(/\r\n?|\n/);
   return {
     type: 'doc',
     content: paras.map((p) => (p ? { type: 'paragraph', content: [{ type: 'text', text: p }] } : { type: 'paragraph' })),
@@ -751,4 +762,129 @@ export function moveImageIntoContainer(
   };
 
   return repairPage({ ...page, items: nextItems, order: nextOrder });
+}
+
+export function addSheet(page: PageContent, sheetDef?: Partial<SheetDef>): PageContent {
+  const currentSheets =
+    page.sheets && page.sheets.length > 0
+      ? [...page.sheets]
+      : [{ id: newId(), width: 794, height: 1123, type: 'blank' as const }];
+
+  const lastSheet = currentSheets[currentSheets.length - 1];
+  const newSheet: SheetDef = {
+    id: newId(),
+    width: sheetDef?.width ?? lastSheet?.width ?? 794,
+    height: sheetDef?.height ?? lastSheet?.height ?? 1123,
+    type: sheetDef?.type ?? 'blank',
+    pdfPage: sheetDef?.pdfPage,
+    pdfAssetId: sheetDef?.pdfAssetId,
+  };
+  return { ...page, sheets: [...currentSheets, newSheet] };
+}
+
+function itemTopY(it: CanvasItem): number {
+  if ('y' in it && typeof it.y === 'number') return it.y;
+  if ('y1' in it && typeof it.y1 === 'number') return Math.min(it.y1, it.y2 ?? it.y1);
+  if (it.type === 'stroke' && it.points.length >= 2) return it.points[1];
+  return 0;
+}
+
+export function insertSheetAfter(page: PageContent, afterIndex: number, sheetDef?: Partial<SheetDef>): PageContent {
+  const currentSheets =
+    page.sheets && page.sheets.length > 0
+      ? [...page.sheets]
+      : [{ id: newId(), width: 794, height: 1123, type: 'blank' as const }];
+
+  const safeIndex = Math.max(0, Math.min(afterIndex, currentSheets.length - 1));
+  const refSheet = currentSheets[safeIndex] ?? currentSheets[currentSheets.length - 1];
+  const newSheet: SheetDef = {
+    id: newId(),
+    width: sheetDef?.width ?? refSheet?.width ?? 794,
+    height: sheetDef?.height ?? refSheet?.height ?? 1123,
+    type: sheetDef?.type ?? 'blank',
+    pdfPage: sheetDef?.pdfPage,
+    pdfAssetId: sheetDef?.pdfAssetId,
+  };
+
+  const SHEET_GAP = 36;
+  let splitY = 0;
+  for (let i = 0; i <= safeIndex && i < currentSheets.length; i++) {
+    splitY += currentSheets[i].height + SHEET_GAP;
+  }
+
+  const shiftDy = newSheet.height + SHEET_GAP;
+  const nextSheets = [
+    ...currentSheets.slice(0, safeIndex + 1),
+    newSheet,
+    ...currentSheets.slice(safeIndex + 1),
+  ];
+
+  const nextItems = { ...page.items };
+  let itemsChanged = false;
+  for (const id of page.order) {
+    const it = nextItems[id];
+    if (!it || it.parentId) continue;
+    if (itemTopY(it) >= splitY) {
+      nextItems[id] = { ...it, ...translateItem(it, 0, shiftDy) } as CanvasItem;
+      itemsChanged = true;
+    }
+  }
+
+  return {
+    ...page,
+    sheets: nextSheets,
+    items: itemsChanged ? nextItems : page.items,
+  };
+}
+
+/**
+ * Removes the sheet at `sheetIndex` (provided at least two sheets exist),
+ * deletes items located on that sheet, and shifts subsequent items up.
+ */
+export function removeSheet(page: PageContent, sheetIndex: number): PageContent {
+  const currentSheets =
+    page.sheets && page.sheets.length > 0
+      ? [...page.sheets]
+      : [{ id: newId(), width: 794, height: 1123, type: 'blank' as const }];
+
+  if (currentSheets.length <= 1) return page;
+  if (sheetIndex < 0 || sheetIndex >= currentSheets.length) return page;
+
+  const SHEET_GAP = 36;
+  const removed = currentSheets[sheetIndex];
+  let prevY = 0;
+  for (let i = 0; i < sheetIndex; i++) {
+    prevY += currentSheets[i].height + SHEET_GAP;
+  }
+  const bandStart = sheetIndex === 0 ? -Infinity : prevY;
+  const bandEnd = prevY + removed.height + SHEET_GAP;
+  const shiftDy = -(removed.height + SHEET_GAP);
+
+  const removedIds: ID[] = [];
+  for (const id of page.order) {
+    const it = page.items[id];
+    if (!it || it.parentId) continue;
+    const y = itemTopY(it);
+    if (y >= bandStart && y < bandEnd) {
+      removedIds.push(id);
+    }
+  }
+
+  const nextPage = removedIds.length > 0 ? deleteItems(page, removedIds) : page;
+  const nextItems = { ...nextPage.items };
+  let itemsChanged = false;
+  for (const id of nextPage.order) {
+    const it = nextItems[id];
+    if (!it || it.parentId) continue;
+    if (itemTopY(it) >= bandEnd) {
+      nextItems[id] = { ...it, ...translateItem(it, 0, shiftDy) } as CanvasItem;
+      itemsChanged = true;
+    }
+  }
+
+  return {
+    ...nextPage,
+    sheets: currentSheets.filter((_, i) => i !== sheetIndex),
+    items: itemsChanged ? nextItems : nextPage.items,
+  };
 }

@@ -31,6 +31,13 @@ describe('shortcut matching', () => {
   it('formats combos for display', () => {
     expect(formatCombo('mod+shift+z')).toMatch(/Z/);
   });
+  it('matches macOS fn+Control+Arrow window tiling combos', () => {
+    expect(matches(key({ key: 'Home', code: 'Home', ctrlKey: true }), 'ctrl+home', true)).toBe(true);
+    expect(matches(key({ key: 'End', code: 'End', ctrlKey: true }), 'ctrl+end', true)).toBe(true);
+    expect(matches(key({ key: 'PageUp', code: 'PageUp', ctrlKey: true }), 'ctrl+pageup', true)).toBe(true);
+    expect(matches(key({ key: 'PageDown', code: 'PageDown', ctrlKey: true }), 'ctrl+pagedown', true)).toBe(true);
+    expect(matches(key({ key: 'ArrowLeft', code: 'ArrowLeft', ctrlKey: true }), 'ctrl+left', true)).toBe(true);
+  });
 });
 
 describe('dispatching', () => {

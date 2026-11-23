@@ -94,7 +94,7 @@ body {
   color: var(--ink);
   background: var(--field);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  overflow: clip;
   overscroll-behavior: none;
 }
 
@@ -232,7 +232,7 @@ textarea {
   min-height: 0;
   min-width: 0;
   border-radius: var(--r-panel);
-  overflow: hidden;
+  overflow: clip;
   box-shadow: var(--shadow-float), 0 0 0 1px var(--glass-edge);
   isolation: isolate;
   z-index: 1;
@@ -459,7 +459,8 @@ textarea {
   top: 0;
   bottom: 0;
   z-index: 60;
-  max-width: calc(100vw - 20px);
+  max-width: 100%;
+  overflow-x: auto;
   background: var(--glass-bg-strong);
   animation: slide-in 0.22s var(--ease);
 }
@@ -747,6 +748,14 @@ textarea {
   flex-shrink: 0;
   z-index: 15;
   box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+.ribbon-fixed-left {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 .ribbon-tools {
   display: flex;
@@ -757,6 +766,11 @@ textarea {
   scrollbar-width: none;
   flex: 1;
   min-width: 0;
+  position: relative;
+  z-index: 1;
+  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: contain;
 }
 .ribbon-tools::-webkit-scrollbar {
   display: none;
@@ -766,18 +780,29 @@ textarea {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 2px 4px 1px 4px;
+  padding: 1px 5px 0 6px;
   gap: 2px;
+  min-width: 54px;
   flex-shrink: 0;
   border-left: 1px solid var(--line);
   margin-left: 2px;
+  position: relative;
+  z-index: 2;
 }
-/* hint that more controls are reachable by scrolling horizontally */
+/* hint that more controls pass behind Modifica (left) and Strumenti (right) */
 .ribbon.overflowing .ribbon-tools {
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+.ribbon.overflowing.at-start .ribbon-tools {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
 }
 .ribbon.overflowing.at-end .ribbon-tools {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px);
+  mask-image: linear-gradient(90deg, transparent, #000 28px);
+}
+.ribbon.overflowing.at-start.at-end .ribbon-tools {
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -1224,9 +1249,12 @@ textarea {
   padding: 4px;
   border-radius: var(--r-panel);
   z-index: 20;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  height: auto;
   max-height: 100%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: none;
   flex-shrink: 0;
 }
@@ -1653,15 +1681,24 @@ kbd {
   max-height: 56vh;
   overflow: auto;
 }
+.preview-scaler-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
 .preview-scaler {
-  zoom: 0.42;
+  transform: scale(0.42);
+  transform-origin: top center;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 24px;
+  flex-shrink: 0;
 }
 .preview-scaler .sheet {
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
 }
 .preview-scaler .hint {
   font-size: 28px;
@@ -1718,6 +1755,24 @@ kbd {
 }
 
 /* ------------------------------------------------------------------ responsive */
+@media (max-height: 600px) {
+  .tool-palette,
+  .tool-palette.glass {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    align-content: start;
+    justify-items: center;
+    gap: 1px;
+    padding: 3px;
+  }
+  .tool-palette .tool-sep {
+    display: none;
+  }
+  .tool-palette .tool-btn {
+    width: 26px;
+    height: 26px;
+  }
+}
 @media (max-width: 900px) {
   .app {
     padding: 3px;

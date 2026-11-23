@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, ChevronLeft, ChevronRight, Copy, FileDown, FileText, FolderInput, Hash, Layers, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Star, Tag, Trash2 } from 'lucide-react';
+import { ArrowUpDown, BookOpen, ChevronLeft, ChevronRight, Copy, FileDown, FileText, FolderInput, Hash, Layers, LayoutTemplate, MoreHorizontal, Palette, Pencil, Plus, Star, Tag, Trash2 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { askText, confirmDanger, toast, useUI } from '../store/ui';
 import { registerShortcuts } from '../shortcuts/registry';
 import * as W from '../model/workspaceOps';
-import type { ID } from '../types';
+import type { ID, PageSortOrder } from '../types';
 
 function relTime(ts: number): string {
   const d = Date.now() - ts;
@@ -560,6 +560,26 @@ function PageList({ onCollapse }: { onCollapse: () => void }) {
         onCollapse={onCollapse}
       />
       {sec && <div className="panel-sub">{sec.name}</div>}
+      {sec && (
+        <div className="sidebar-sort-bar">
+          <ArrowUpDown size={12} className="sidebar-sort-icon" aria-hidden="true" />
+          <select
+            className="sidebar-sort-select"
+            data-testid="sidebar-page-sort"
+            aria-label="Ordina pagine nella sezione"
+            value={sec.pageSort ?? 'manual'}
+            onChange={(e) =>
+              useStore.getState().mutateWorkspace((w) => W.sortSectionPages(w, sec.id, e.target.value as PageSortOrder))
+            }
+          >
+            {W.PAGE_SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {sectionTags.length > 0 && (
         <div className="sidebar-tag-filter" data-testid="sidebar-tag-filter" role="group" aria-label="Filtra per tag">
           {sectionTags.map((t) => (

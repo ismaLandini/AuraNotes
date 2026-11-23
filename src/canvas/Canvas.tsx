@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { Plus, Trash2 } from 'lucide-react';
 import type { JSONContent } from '@tiptap/core';
 import type { Anchor, CanvasItem, ConnectorItem, ID, ImageItem, NoteContainerItem, PageContent, Point, Rect, ShapeItem, ShapeKind, StrokeItem, TextItem, Tool } from '../types';
 import { useStore } from '../store/useStore';
@@ -9,6 +11,7 @@ import {
   closestPerimeterAnchor,
   connectorEndpoints,
   constrainAngle,
+  constrainOrthogonal,
   constrainSquare,
   fromImageLocal,
   hitTest,
@@ -37,10 +40,21 @@ import {
   type DropTargetResult,
 } from './containerDrop';
 import { clampViewport, clampZoom, defaultViewport, getViewport, registerContainer, screenToWorld, setLastPointerWorld, setVp as setViewportClamped } from './viewport';
-import { createTextBlock, editSession, finishEditing, handleCopy, handlePaste, insertImageFiles, setCancelActiveGesture } from './actions';
-import { isEditableTarget } from '../shortcuts/registry';
+import {
+  consumeShiftPasteIntent,
+  createTextBlock,
+  editSession,
+  finishEditing,
+  handleCopy,
+  handlePaste,
+  insertImageFiles,
+  markShiftPasteIntent,
+  setCancelActiveGesture,
+} from './actions';
+import { isEditableTarget, isMac } from '../shortcuts/registry';
 import { isModalOpen, useUI } from '../store/ui';
-import { A4_WIDTH, BODY_START, SHEET_TOP, sheetBottom, sheetLeft, sheetRight } from '../lib/page';
+import { BODY_START, SHEET_TOP, computeSheetLayouts, isPdfDocument, sheetBottom, sheetLeft, sheetRight } from '../lib/page';
+import { CanvasSheet } from './CanvasSheet';
 
 
 import { SheetTitle } from './SheetTitle';
@@ -70,9 +84,20 @@ type Gesture =
       freeImageId?: ID;
     }
   | { kind: 'marquee'; origin: Point; current: Point; base: ID[] }
-  | { kind: 'draw'; tool: 'pen' | 'highlighter'; points: number[]; pressures: number[]; parentId: ID | null; imageBlockHit?: ImageBlockHit | null }
+  | {
+      kind: 'draw';
+      tool: 'pen' | 'highlighter';
+      origin: Point;
+      points: number[];
+      pressures: number[];
+      rawPoints: number[];
+      rawPressures: number[];
+      isStraight?: boolean;
+      parentId: ID | null;
+      imageBlockHit?: ImageBlockHit | null;
+    }
   | { kind: 'shape'; shape: ShapeKind; start: Point; end: Point; parentId: ID | null; startItem: ID | null; imageBlockHit?: ImageBlockHit | null }
-  | { kind: 'connector'; fromId: ID; fromAnchor: Anchor; end: Point; overId: ID | null }
+  | { kind: 'connector'; fromId: ID | null; fromAnchor: Anchor; start: Point; end: Point; overId: ID | null }
   | { kind: 'reconnect'; before: PageContent; id: ID; end: 'from' | 'to'; point: Point; overId: ID | null }
   | { kind: 'erase'; before: PageContent; erased: Set<ID>; last: Point }
   | { kind: 'resize'; before: PageContent; id: ID; handle: Handle; orig: CanvasItem; alt: boolean };
@@ -119,7 +144,7 @@ function hitAt(page: PageContent, p: Point, tol: number, opts: { topLevelOnly?: 
 
 /**
  * The object a connector end should attach to: prefers the object whose perimeter is
- * closest within `tol`, otherwise the topmost non-excluded object under the pointer.
+ * closest within `tol`, otherwise an object whose edge is within comfortable reach.
  */
 function connectTargetAt(page: PageContent, p: Point, tol: number, exclude: ID | null): CanvasItem | null {
   let bestPerim: CanvasItem | null = null;
@@ -143,7 +168,10 @@ function connectTargetAt(page: PageContent, p: Point, tol: number, exclude: ID |
     .filter((x) => x.it && !x.it.parentId && x.it.type !== 'connector' && x.it.id !== exclude)
     .sort((a, b) => zFor(b.it, b.i) - zFor(a.it, a.i));
   for (const { it } of ordered) {
-    if (hitTest(it, page.items, p, tol)) return it;
+    const r = itemBounds(it, page.items);
+    const isSmall = r.w <= Math.max(48, tol * 3) && r.h <= Math.max(48, tol * 3);
+    const closeToEdge = Math.min(Math.abs(p.x - r.x), Math.abs(r.x + r.w - p.x), Math.abs(p.y - r.y), Math.abs(r.y + r.h - p.y)) <= tol * 1.5;
+    if ((isSmall || closeToEdge) && hitTest(it, page.items, p, tol)) return it;
   }
   return null;
 }
@@ -264,9 +292,12 @@ export function Canvas() {
   // Re-render on container resizes so the sheet clamp/centring follows the window.
   const [, setResizeTick] = useState(0);
   const vp = clampViewport(vpStored ?? defaultViewport());
+  const vpRef = useRef(vp);
+  vpRef.current = vp;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  const lastPointerRef = useRef<Point>({ x: 0, y: 0 });
   const [preview, setPreview] = useState<Preview>({});
   const [spaceDown, setSpaceDown] = useState(false);
   const [hoverCursor, setHoverCursor] = useState<string>('default');
@@ -279,16 +310,23 @@ export function Canvas() {
     if (el) ro!.observe(el);
     return () => {
       ro?.disconnect();
-      registerContainer(null);
     };
   }, [pageId]);
+
+  useEffect(() => {
+    return () => {
+      registerContainer(null);
+    };
+  }, []);
 
   const setVp = useCallback((v: { x: number; y: number; zoom: number }) => setViewportClamped(v), []);
   const getVp = () => getViewport();
 
   const toWorld = (clientX: number, clientY: number): Point => {
-    const r = containerRef.current!.getBoundingClientRect();
-    return screenToWorld(clientX - r.left, clientY - r.top, getVp());
+    const el = containerRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const r = el.getBoundingClientRect();
+    return screenToWorld(clientX - r.left, clientY - r.top, vpRef.current);
   };
 
   const containerDropCache = useRef<CachedContainer[]>([]);
@@ -382,32 +420,8 @@ export function Canvas() {
     };
   }, [editingId]);
 
-  const startCreateText = (at: Point, variant: 'plain' | 'sticky', parent: ImageItem | null) => {
-    const s = useStore.getState();
-    if (s.editingId) finishEditing(s.editingId);
-    const cur = s.currentPage();
-    if (!cur) return;
-    editSession.pendingBefore = cur;
-    if (parent) {
-      const local = toImageLocal(parent, at.x, at.y);
-      const item: TextItem = {
-        id: newId(),
-        type: 'text',
-        x: local.x,
-        y: local.y,
-        w: variant === 'sticky' ? 240 : 480,
-        h: 32,
-        doc: P.EMPTY_DOC,
-        variant,
-        parentId: parent.id,
-        ...(variant === 'sticky' ? { bg: '#fff4b8' } : {}),
-      };
-      s.updatePage((p) => P.pruneEmptyTextItems(P.addItems(p, [item]), item.id), false);
-      s.setSelection([item.id]);
-      s.setEditing(item.id);
-    } else {
-      createTextBlock({ x: at.x, y: at.y - 12 }, { variant });
-    }
+  const startCreateText = (at: Point, variant: 'plain' | 'sticky') => {
+    createTextBlock({ x: at.x, y: at.y - 12 }, { variant });
   };
 
   const enterEdit = (id: ID, clientX: number | null, clientY: number | null) => {
@@ -423,14 +437,47 @@ export function Canvas() {
     if (id) finishEditing(id);
   };
 
+  const updateDrawPreview = () => {
+    const g = gesture.current;
+    if (!g || g.kind !== 'draw') return;
+    const s = useSettings.getState();
+    const hl = g.tool === 'highlighter';
+    setPreview({ stroke: { d: smoothPath(g.points), color: hl ? s.highlighterColor : s.penColor, width: hl ? s.highlighterWidth : s.penWidth, opacity: hl ? 0.38 : 1, highlighter: hl } });
+  };
+
+  const syncStraightDraw = (isStraight: boolean) => {
+    const g = gesture.current;
+    if (!g || g.kind !== 'draw') return;
+    if (isStraight) {
+      const world = lastPointerRef.current;
+      const target = constrainOrthogonal(g.origin.x, g.origin.y, world.x, world.y);
+      g.isStraight = true;
+      g.points = [g.origin.x, g.origin.y, target.x, target.y];
+    } else {
+      g.isStraight = false;
+      g.points = g.rawPoints.slice();
+      g.pressures = g.rawPressures.slice();
+    }
+    updateDrawPreview();
+  };
+
   // ---------------------------------------------------------------- wheel / pinch
   useEffect(() => {
+    const isInsideUI = (target: EventTarget | null) => {
+      const el = target instanceof Element ? target : (target as Node | null)?.parentElement ?? null;
+      return Boolean(
+        el?.closest(
+          '.ribbon, .vertical-tool-rail, .tool-palette, .modal, .popover, .menu, .submenu, .sidebar, .nav-list, .shortcuts-overlay, .dialog, .floating-format-bar, .page-outline-panel, .window-titlebar, .zoom-controls, .nav-minimenu'
+        )
+      );
+    };
+
     const onWheel = (e: WheelEvent) => {
-      // Don't intercept wheel events inside popups, menus, modals, or sidebars
-      const target = e.target as HTMLElement | null;
-      if (target?.closest('.modal, .popover, .menu, .submenu, .sidebar, .nav-list, .shortcuts-overlay, .dialog')) {
+      // Don't intercept wheel events if already handled or inside UI overlays/toolbars
+      if (e.defaultPrevented || isInsideUI(e.target)) {
         return;
       }
+      const target = e.target as HTMLElement | null;
       // Allow internal horizontal scrolling for preformatted code blocks or math blocks if present
       const childScrollable = target?.closest('pre, .math-block') as HTMLElement | null;
       if (childScrollable && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
@@ -467,10 +514,14 @@ export function Canvas() {
     // Safari pinch gestures
     let gestureStartZoom = 1;
     const onGestureStart = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (isInsideUI(target)) return;
       e.preventDefault();
       gestureStartZoom = getViewport().zoom;
     };
     const onGestureChange = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (isInsideUI(target)) return;
       e.preventDefault();
       const ge = e as Event & { scale: number; clientX: number; clientY: number };
       const v = getViewport();
@@ -526,6 +577,13 @@ export function Canvas() {
           return;
         }
       }
+      if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Shift') {
+        syncStraightDraw(true);
+      }
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        markShiftPasteIntent();
+      }
       if (e.code === 'Space' && !isEditableTarget(e.target) && !isModalOpen()) {
         if (!e.repeat) setSpaceDown(true);
         e.preventDefault();
@@ -533,11 +591,17 @@ export function Canvas() {
     };
     const up = (e: KeyboardEvent) => {
       if (e.code === 'Space') setSpaceDown(false);
+      if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Shift') {
+        syncStraightDraw(e.metaKey || e.ctrlKey || e.shiftKey);
+      }
     };
     const blur = () => setSpaceDown(false);
+    const visibilityChange = () => {
+      if (document.hidden) setSpaceDown(false);
+    };
     const textSelected = () => {
       const sel = window.getSelection();
-      return !!sel && !sel.isCollapsed && sel.toString().length > 0;
+      return !!sel && !sel.isCollapsed && sel.toString().length > 0 && !!sel.anchorNode && document.contains(sel.anchorNode);
     };
     const onCopy = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target) || isModalOpen() || textSelected()) return;
@@ -549,11 +613,13 @@ export function Canvas() {
     };
     const onPaste = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target) || isModalOpen()) return;
-      void handlePaste(e);
+      const plain = consumeShiftPasteIntent();
+      void handlePaste(e, { plain });
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', blur);
+    document.addEventListener('visibilitychange', visibilityChange);
     document.addEventListener('copy', onCopy);
     document.addEventListener('cut', onCut);
     document.addEventListener('paste', onPaste);
@@ -562,6 +628,7 @@ export function Canvas() {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
+      document.removeEventListener('visibilitychange', visibilityChange);
       document.removeEventListener('copy', onCopy);
       document.removeEventListener('cut', onCut);
       document.removeEventListener('paste', onPaste);
@@ -658,21 +725,26 @@ export function Canvas() {
     if (document.activeElement instanceof HTMLElement && document.activeElement !== el) document.activeElement.blur();
     el.focus({ preventScroll: true });
 
+    const curAfterExit = useStore.getState().currentPage();
+    if (!curAfterExit) return;
+    const activeCur = curAfterExit;
+    const latestSel = useStore.getState().selection;
+
     const handle = target.dataset.handle as Handle | undefined;
-    if (handle && st.selection.length === 1) {
-      const id = st.selection[0];
-      const it = cur.items[id];
+    if (handle && latestSel.length === 1) {
+      const id = latestSel[0];
+      const it = activeCur.items[id];
       if (handle === 'grip') e.preventDefault(); // keep the editor focused while dragging the block
       if (it && it.type === 'connector' && (handle === 'c1' || handle === 'c2')) {
-        gesture.current = { kind: 'reconnect', before: cur, id, end: handle === 'c1' ? 'from' : 'to', point: world, overId: null };
+        gesture.current = { kind: 'reconnect', before: activeCur, id, end: handle === 'c1' ? 'from' : 'to', point: world, overId: null };
       } else if (it && handle === 'grip') {
         const isFree = isFreeImageContainer(it);
         if (isFree) {
-          containerDropCache.current = createContainerDropCache(cur, id);
+          containerDropCache.current = createContainerDropCache(activeCur, id);
         }
-        gesture.current = { kind: 'move', before: cur, origin: world, ids: [id], moved: false, clickedId: null, wasSelected: true, shift: false, clientX: e.clientX, clientY: e.clientY, freeImageId: isFree ? id : undefined };
+        gesture.current = { kind: 'move', before: activeCur, origin: world, ids: [id], moved: false, clickedId: null, wasSelected: true, shift: false, clientX: e.clientX, clientY: e.clientY, freeImageId: isFree ? id : undefined };
       } else if (it && !it.locked) {
-        gesture.current = { kind: 'resize', before: cur, id, handle, orig: it, alt: e.altKey };
+        gesture.current = { kind: 'resize', before: activeCur, id, handle, orig: it, alt: e.altKey };
       }
       el.setPointerCapture(e.pointerId);
       return;
@@ -680,22 +752,22 @@ export function Canvas() {
 
     switch (tool) {
       case 'select': {
-        const hit = hitAt(cur, world, tol);
+        const hit = hitAt(activeCur, world, tol);
         if (hit) {
-          const members = groupOf(cur, hit);
-          const wasSelected = st.selection.includes(hit.id);
-          let sel = st.selection;
+          const members = groupOf(activeCur, hit);
+          const wasSelected = latestSel.includes(hit.id);
+          let sel = latestSel;
           if (e.shiftKey || e.metaKey) sel = wasSelected ? sel.filter((s) => !members.includes(s)) : [...new Set([...sel, ...members])];
           else if (!wasSelected) sel = members;
           st.setSelection(sel);
-          const movable = sel.filter((id) => cur.items[id] && !cur.items[id].locked && cur.items[id].type !== 'connector');
-          const singleFreeId = movable.length === 1 && isFreeImageContainer(cur.items[movable[0]]) ? movable[0] : undefined;
+          const movable = sel.filter((id) => activeCur.items[id] && !activeCur.items[id].locked && activeCur.items[id].type !== 'connector');
+          const singleFreeId = movable.length === 1 && isFreeImageContainer(activeCur.items[movable[0]]) ? movable[0] : undefined;
           if (singleFreeId) {
-            containerDropCache.current = createContainerDropCache(cur, singleFreeId);
+            containerDropCache.current = createContainerDropCache(activeCur, singleFreeId);
           }
-          gesture.current = { kind: 'move', before: cur, origin: world, ids: movable, moved: false, clickedId: hit.id, wasSelected, shift: e.shiftKey, clientX: e.clientX, clientY: e.clientY, freeImageId: singleFreeId };
+          gesture.current = { kind: 'move', before: activeCur, origin: world, ids: movable, moved: false, clickedId: hit.id, wasSelected, shift: e.shiftKey, clientX: e.clientX, clientY: e.clientY, freeImageId: singleFreeId };
         } else {
-          const base = e.shiftKey ? st.selection : [];
+          const base = e.shiftKey ? latestSel : [];
           if (!e.shiftKey) st.setSelection([]);
           gesture.current = { kind: 'marquee', origin: world, current: world, base };
         }
@@ -703,21 +775,40 @@ export function Canvas() {
       }
       case 'text':
       case 'sticky': {
-        const hit = hitAt(cur, world, 0, { types: ['text', 'container'] });
-        if (hit && (hit.type === 'text' || hit.type === 'container') && !isFreeImageContainer(hit)) enterEdit(hit.id, e.clientX, e.clientY);
-        else startCreateText(world, tool === 'sticky' ? 'sticky' : 'plain', topImageAt(cur, world));
+        const textItemEl = target.closest<HTMLElement>('.text-item[data-id]');
+        const clickedId = textItemEl?.dataset.id;
+        const clickedItem = clickedId ? activeCur.items[clickedId] : null;
+        if (clickedItem && (clickedItem.type === 'text' || clickedItem.type === 'container') && !isFreeImageContainer(clickedItem)) {
+          enterEdit(clickedItem.id, e.clientX, e.clientY);
+        } else {
+          startCreateText(world, tool === 'sticky' ? 'sticky' : 'plain');
+        }
         return;
       }
       case 'pen':
       case 'highlighter': {
-        const parent = topImageAt(cur, world);
+        const parent = topImageAt(activeCur, world);
         const imageBlockHit = !parent ? findImageBlockHitAt(containerRef.current, e.clientX, e.clientY, toWorld) : null;
-        gesture.current = { kind: 'draw', tool, points: [world.x, world.y], pressures: [e.pressure || 0.5], parentId: parent?.id ?? null, imageBlockHit };
+        lastPointerRef.current = world;
+        const initialPressure = e.pressure || 0.5;
+        const isStraight = e.metaKey || e.ctrlKey || e.shiftKey;
+        gesture.current = {
+          kind: 'draw',
+          tool,
+          origin: world,
+          points: [world.x, world.y],
+          pressures: [initialPressure],
+          rawPoints: [world.x, world.y],
+          rawPressures: [initialPressure],
+          isStraight,
+          parentId: parent?.id ?? null,
+          imageBlockHit,
+        };
         updateDrawPreview();
         break;
       }
       case 'eraser': {
-        gesture.current = { kind: 'erase', before: cur, erased: new Set(), last: world };
+        gesture.current = { kind: 'erase', before: activeCur, erased: new Set(), last: world };
         eraseAt(world);
         break;
       }
@@ -726,9 +817,9 @@ export function Canvas() {
       case 'double-arrow':
       case 'rect':
       case 'ellipse': {
-        const parent = topImageAt(cur, world);
+        const parent = topImageAt(activeCur, world);
         const imageBlockHit = !parent ? findImageBlockHitAt(containerRef.current, e.clientX, e.clientY, toWorld) : null;
-        const startHit = tool === 'arrow' || tool === 'line' || tool === 'double-arrow' ? connectTargetAt(cur, world, 12 / v.zoom, null) : null;
+        const startHit = tool === 'arrow' || tool === 'line' || tool === 'double-arrow' ? connectTargetAt(activeCur, world, 12 / v.zoom, null) : null;
         gesture.current = {
           kind: 'shape',
           shape: tool,
@@ -741,22 +832,15 @@ export function Canvas() {
         break;
       }
       case 'connector': {
-        const hit = connectTargetAt(cur, world, 12 / v.zoom, null);
-        if (hit) gesture.current = { kind: 'connector', fromId: hit.id, fromAnchor: anchorFor(cur, hit, world, 12 / v.zoom), end: world, overId: null };
+        const hit = connectTargetAt(activeCur, world, 12 / v.zoom, null);
+        const fromAnchor = hit ? anchorFor(activeCur, hit, world, 12 / v.zoom) : 'auto';
+        gesture.current = { kind: 'connector', fromId: hit ? hit.id : null, fromAnchor, start: world, end: world, overId: null };
         break;
       }
       default:
         break;
     }
-    el.setPointerCapture(e.pointerId);
-  };
-
-  const updateDrawPreview = () => {
-    const g = gesture.current;
-    if (!g || g.kind !== 'draw') return;
-    const s = useSettings.getState();
-    const hl = g.tool === 'highlighter';
-    setPreview({ stroke: { d: smoothPath(g.points), color: hl ? s.highlighterColor : s.penColor, width: hl ? s.highlighterWidth : s.penWidth, opacity: hl ? 0.38 : 1, highlighter: hl } });
+    if (gesture.current) el.setPointerCapture(e.pointerId);
   };
 
   const eraseAt = (p: Point) => {
@@ -781,7 +865,11 @@ export function Canvas() {
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const world = toWorld(e.clientX, e.clientY);
-    setLastPointerWorld(world);
+    lastPointerRef.current = world;
+    const targetEl = e.target as HTMLElement | null;
+    if (!targetEl?.closest?.('[data-ui]')) {
+      setLastPointerWorld(world);
+    }
     const g = gesture.current;
     const st = useStore.getState();
     const cur = st.currentPage();
@@ -864,20 +952,32 @@ export function Canvas() {
         break;
       }
       case 'draw': {
-        const n = g.points.length;
-        const lx = g.points[n - 2];
-        const ly = g.points[n - 1];
+        const isStraight = e.metaKey || e.ctrlKey || e.shiftKey;
+        g.isStraight = isStraight;
+
+        const n = g.rawPoints.length;
+        const lx = g.rawPoints[n - 2];
+        const ly = g.rawPoints[n - 1];
         const events = typeof e.nativeEvent.getCoalescedEvents === 'function' ? e.nativeEvent.getCoalescedEvents() : [];
         const samples = events.length ? events.map((ce) => toWorld(ce.clientX, ce.clientY)) : [world];
         let px = lx;
         let py = ly;
         for (const s of samples) {
           if (Math.hypot(s.x - px, s.y - py) > 0.6 / getVp().zoom) {
-            g.points.push(s.x, s.y);
-            g.pressures.push(e.pressure || 0.5);
+            g.rawPoints.push(s.x, s.y);
+            g.rawPressures.push(e.pressure || 0.5);
             px = s.x;
             py = s.y;
           }
+        }
+
+        if (isStraight) {
+          const target = constrainOrthogonal(g.origin.x, g.origin.y, world.x, world.y);
+          g.points = [g.origin.x, g.origin.y, target.x, target.y];
+          g.pressures = [g.rawPressures[0] || 0.5, e.pressure || 0.5];
+        } else {
+          g.points = g.rawPoints.slice();
+          g.pressures = g.rawPressures.slice();
         }
         updateDrawPreview();
         break;
@@ -897,23 +997,24 @@ export function Canvas() {
       case 'connector': {
         g.end = world;
         const tol = 12 / getVp().zoom;
-        const over = connectTargetAt(cur, world, tol, g.fromId);
+        const over = connectTargetAt(cur, world, tol, g.fromId ?? null);
         g.overId = over ? over.id : null;
-        const source = cur.items[g.fromId];
+        const source = g.fromId ? cur.items[g.fromId] : null;
         let anchor: Point | undefined;
         let toAnchor: Anchor = 'auto';
         if (over) {
           toAnchor = anchorFor(cur, over, world, tol);
           if (typeof toAnchor === 'object') anchor = fixedAnchorPoint(over, cur.items, toAnchor);
         }
-        const from = previewEnd(cur, source, g.fromAnchor, anchor ?? world);
+        const from = source ? previewEnd(cur, source, g.fromAnchor, anchor ?? world) : g.start;
+        const to = anchor ?? (over ? previewEnd(cur, over, 'auto', from) : world);
         setPreview({
           connector: {
             from,
-            to: anchor ?? (over ? previewEnd(cur, over, 'auto', from) : world),
+            to,
             fromAnchor: from,
             anchor,
-            sourceId: g.fromId,
+            sourceId: g.fromId ?? undefined,
             targetId: over?.id,
           },
         });
@@ -1024,7 +1125,11 @@ export function Canvas() {
     const g = gesture.current;
     gesture.current = null;
     const el = containerRef.current;
-    if (el?.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    try {
+      if (el?.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore stale pointer capture */
+    }
     const st = useStore.getState();
     const cur = st.currentPage();
     if (!g || !cur) {
@@ -1068,7 +1173,13 @@ export function Canvas() {
         if (g.points.length < 2) break;
         const hl = g.tool === 'highlighter';
         const zoom = getVp().zoom;
-        let pts = g.points.length > 4 ? simplify(g.points, 0.35 / zoom) : g.points.slice();
+        let pts: number[];
+        if (g.isStraight && g.points.length >= 4) {
+          // Linea dritta vincolata ortogonalmente: mantiene esattamente i due punti estremi
+          pts = [g.points[0], g.points[1], g.points[g.points.length - 2], g.points[g.points.length - 1]];
+        } else {
+          pts = g.points.length > 4 ? simplify(g.points, 0.35 / zoom) : g.points.slice();
+        }
         if (pts.length === 2) pts = [pts[0], pts[1], pts[0] + 0.01, pts[1] + 0.01];
         const avgP = g.pressures.reduce((a, b) => a + b, 0) / g.pressures.length;
         const isPen = e.pointerType === 'pen';
@@ -1183,20 +1294,40 @@ export function Canvas() {
         break;
       }
       case 'connector': {
-        if (!g.overId || !cur.items[g.overId] || !cur.items[g.fromId]) break;
-        const conn: ConnectorItem = {
-          id: newId(),
-          type: 'connector',
-          fromId: g.fromId,
-          toId: g.overId,
-          fromAnchor: g.fromAnchor,
-          toAnchor: anchorFor(cur, cur.items[g.overId], g.end, 12 / getVp().zoom),
-          arrow: 'end',
-          color: s.connectorColor,
-          width: s.connectorWidth,
-          layer: 'back',
-        };
-        st.updatePage((pg) => P.addItems(pg, [conn]));
+        const source = g.fromId ? cur.items[g.fromId] : null;
+        const target = g.overId ? cur.items[g.overId] : null;
+        if (source && target && source.id !== target.id) {
+          const conn: ConnectorItem = {
+            id: newId(),
+            type: 'connector',
+            fromId: source.id,
+            toId: target.id,
+            fromAnchor: g.fromAnchor,
+            toAnchor: anchorFor(cur, target, g.end, 12 / getVp().zoom),
+            arrow: 'end',
+            color: s.connectorColor,
+            width: s.connectorWidth,
+            layer: 'back',
+          };
+          st.updatePage((pg) => P.addItems(pg, [conn]));
+        } else if (Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y) > 4) {
+          const startPt = source ? previewEnd(cur, source, g.fromAnchor, g.end) : g.start;
+          const endPt = target ? previewEnd(cur, target, 'auto', startPt) : g.end;
+          const shape: ShapeItem = {
+            id: newId(),
+            type: 'shape',
+            kind: 'arrow',
+            x1: startPt.x,
+            y1: startPt.y,
+            x2: endPt.x,
+            y2: endPt.y,
+            color: s.connectorColor,
+            width: s.connectorWidth,
+            opacity: 1,
+            fill: null,
+          };
+          st.updatePage((pg) => P.addItems(pg, [shape]));
+        }
         break;
       }
       case 'reconnect': {
@@ -1211,7 +1342,7 @@ export function Canvas() {
         // A plain click on an empty space starts writing right there (OneNote style).
         const moved = Math.hypot(g.current.x - g.origin.x, g.current.y - g.origin.y) * getVp().zoom > 3;
         if (!moved && !e.shiftKey && g.origin.y >= SHEET_TOP) {
-          startCreateText({ x: g.origin.x, y: g.origin.y }, 'plain', null);
+          startCreateText({ x: g.origin.x, y: g.origin.y }, 'plain');
         }
         break;
       }
@@ -1376,25 +1507,39 @@ export function Canvas() {
   // Switching to another tool ends text editing properly (saves, drops empty blocks, clears outlines).
   useEffect(() => {
     const st = useStore.getState();
-    if (tool !== 'select' && st.editingId) {
+    if (st.editingId) {
       finishEditing(st.editingId);
-      st.setSelection([]);
+      if (tool !== 'select') st.setSelection([]);
     }
     setPreview({});
   }, [tool]);
 
-  // Opening any modal dialog (PDF, Shortcuts, Settings, Search, Templates...) ends text editing
-  // cleanly (saves content, drops empty blocks, clears cursor and selection handles).
-  const modalOpen = useUI(isModalOpen);
+  // Opening an external modal dialog (PDF, Shortcuts, Settings, Search, Templates, Confirm...)
+  // ends text editing cleanly. Prompts with `keepEditing` (equations, links, wiki-links)
+  // operate on the active text block and must keep the editor mounted.
+  const externalModalOpen = useUI((s) =>
+    !!(
+      s.confirm ||
+      (s.prompt && !s.prompt.keepEditing) ||
+      s.searchOpen ||
+      s.settingsOpen ||
+      s.exportOpen ||
+      s.trashOpen ||
+      s.pdfDialogOpen ||
+      s.templatePickerOpen ||
+      s.shortcutsOpen
+    ),
+  );
   useEffect(() => {
-    if (modalOpen) {
+    if (externalModalOpen) {
+      setSpaceDown(false);
       const st = useStore.getState();
       if (st.editingId) {
         finishEditing(st.editingId);
         st.setSelection([]);
       }
     }
-  }, [modalOpen]);
+  }, [externalModalOpen]);
 
   const editingSlot = useCallback(
     (t: TextItem) => <EditableRichText key={t.id} id={t.id} initial={t.doc} onChange={(doc) => pageId && updateTextDoc(pageId, t.id, doc)} onExit={onExitEditing} />,
@@ -1441,6 +1586,27 @@ export function Canvas() {
     [editingId, editingSlot],
   );
 
+  const layouts = useMemo(() => (page ? computeSheetLayouts(page) : []), [page]);
+  const [sheetMenu, setSheetMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!sheetMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest('[data-testid="sheet-context-menu"]')) {
+        setSheetMenu(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSheetMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [sheetMenu]);
+
   if (!page || !pageId) {
     return (
       <div className="canvas-empty">
@@ -1476,6 +1642,8 @@ export function Canvas() {
     }
   });
 
+  const firstLayout = layouts[0];
+  const isPdfPage = isPdfDocument(page);
   const sLeft = sheetLeft(page);
   const sRight = sheetRight(page);
 
@@ -1491,20 +1659,54 @@ export function Canvas() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onScroll={(e) => {
+        if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
+        if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
+      }}
       onPointerLeave={() => (tool === 'eraser' || tool === 'connector') && !gesture.current && setPreview({})}
       onDoubleClick={onDoubleClick}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('[data-ui], .menu')) return;
+        const el = containerRef.current;
+        if (!el || !page) return;
+        const worldPt = toWorld(e.clientX, e.clientY);
+        const sheetAttr = target?.closest<HTMLElement>('[data-sheet-index]')?.dataset.sheetIndex;
+        const attrIdx = sheetAttr !== undefined ? Number(sheetAttr) : NaN;
+        const hit = Number.isInteger(attrIdx) && layouts[attrIdx]
+          ? layouts[attrIdx]
+          : layouts.find(
+              (l) => worldPt.x >= l.x && worldPt.x <= l.x + l.w && worldPt.y >= l.y && worldPt.y <= l.y + l.h,
+            );
+        if (!hit) {
+          setSheetMenu(null);
+          return;
+        }
+        setSheetMenu({ index: hit.index, x: e.clientX, y: e.clientY });
+      }}
     >
       <div className="world" style={{ transform: `translate(${-vp.x * vp.zoom}px, ${-vp.y * vp.zoom}px) scale(${vp.zoom})` }}>
-        <div className={`sheet-paper pattern-${bg.pattern}`} style={{ left: sLeft, top: SHEET_TOP, width: sRight - sLeft, height: sheetBottom(page) - SHEET_TOP }} aria-hidden>
-          <span className="a4-guide" style={{ left: A4_WIDTH }} />
-        </div>
-        <SheetTitle pageId={pageId} />
-        {page.order.length === 0 && !editingId && (
-          <div className="sheet-hint" style={{ left: BODY_START.x + 8, top: BODY_START.y + 6 }} aria-hidden>
+        {layouts.map((l) => (
+          <CanvasSheet
+            key={l.sheet.id}
+            sheet={l.sheet}
+            index={l.index}
+            totalSheets={layouts.length}
+            x={l.x}
+            y={l.y}
+            w={l.w}
+            h={l.h}
+            bg={bg}
+          />
+        ))}
+
+        {!isPdfPage && <SheetTitle pageId={pageId} leftOffset={firstLayout?.x ?? 0} />}
+        {!isPdfPage && page.order.length === 0 && !editingId && (
+          <div className="sheet-hint" style={{ left: (firstLayout?.x ?? 0) + BODY_START.x + 8, top: BODY_START.y + 6 }} aria-hidden>
             Fai clic qui per scrivere · ⌘V incolla un’immagine · P penna
           </div>
         )}
@@ -1619,6 +1821,58 @@ export function Canvas() {
       </div>
       <SelectionOverlay page={page} selection={selection} editingId={editingId} vp={vp} tool={tool} />
       <ScrollBars vp={vp} width={containerRef.current?.clientWidth ?? 1000} height={containerRef.current?.clientHeight ?? 700} left={sLeft} right={sRight} bottom={sheetBottom(page)} />
+      {sheetMenu &&
+        createPortal(
+          <div
+            className="menu"
+            data-ui="true"
+            data-testid="sheet-context-menu"
+            style={{
+              position: 'fixed',
+              left: Math.min(sheetMenu.x, window.innerWidth - 220),
+              top: Math.min(sheetMenu.y, window.innerHeight - 110),
+              zIndex: 200,
+            }}
+            role="menu"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="menu-item"
+              data-testid="sheet-ctx-add-below"
+              onClick={() => {
+                const idx = sheetMenu.index;
+                const target = layouts[idx];
+                setSheetMenu(null);
+                const st = useStore.getState();
+                if (st.editingId) finishEditing(st.editingId);
+                if (st.selection.length) st.setSelection([]);
+                if (target) {
+                  st.insertSheetAfterCurrent(idx, { width: target.sheet.width, height: target.sheet.height, type: 'blank' });
+                }
+              }}
+            >
+              <Plus size={14} />
+              <span>Aggiungi foglio sotto</span>
+            </button>
+            <button
+              type="button"
+              className="menu-item danger"
+              data-testid="sheet-ctx-remove"
+              disabled={layouts.length <= 1}
+              title={layouts.length <= 1 ? 'Non puoi rimuovere l’unico foglio della pagina' : 'Rimuovi questo foglio'}
+              onClick={() => {
+                const idx = sheetMenu.index;
+                setSheetMenu(null);
+                useStore.getState().removeSheetFromCurrent(idx);
+              }}
+            >
+              <Trash2 size={14} />
+              <span>Rimuovi foglio</span>
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

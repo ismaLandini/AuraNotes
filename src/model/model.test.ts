@@ -138,6 +138,54 @@ describe('workspace operations', () => {
     expect(backlinks.map((b) => b.page.id)).toEqual(['p1', 'p3']);
     expect(backlinks[0].snippet).toContain('[[Derivate]]');
   });
+
+  it('sorts section pages by title, creation date, and update date, maintains sort on create/rename, and resets to manual on movePage', () => {
+    let ws = setup();
+    ws = W.createPage(ws, 's1', 'Asintoti', 'p4');
+    ws = W.setPageMeta(ws, 'p1', { createdAt: 2000, updatedAt: 5000 });
+    ws = W.setPageMeta(ws, 'p2', { createdAt: 1000, updatedAt: 7000 });
+    ws = W.setPageMeta(ws, 'p4', { createdAt: 3000, updatedAt: 4000 });
+
+    ws = W.sortSectionPages(ws, 's1', 'title-asc');
+    expect(ws.sections.s1.pageSort).toBe('title-asc');
+    expect(ws.sections.s1.pageIds).toEqual(['p4', 'p2', 'p1']);
+
+    // Creating a new page without explicit index keeps the active title-asc sort
+    ws = W.createPage(ws, 's1', 'Integrali', 'p5');
+    expect(ws.sections.s1.pageIds).toEqual(['p4', 'p2', 'p5', 'p1']);
+
+    // Renaming a page while sorted by title keeps the sorted order
+    ws = W.renamePage(ws, 'p1', 'Algebra');
+    expect(ws.sections.s1.pageIds).toEqual(['p1', 'p4', 'p2', 'p5']);
+
+    ws = W.sortSectionPages(ws, 's1', 'title-desc');
+    expect(ws.sections.s1.pageSort).toBe('title-desc');
+    expect(ws.sections.s1.pageIds).toEqual(['p5', 'p2', 'p4', 'p1']);
+
+    ws = W.setPageMeta(ws, 'p5', { createdAt: 4000, updatedAt: 8000 });
+    ws = W.setPageMeta(ws, 'p1', { updatedAt: 5000 });
+
+    ws = W.sortSectionPages(ws, 's1', 'created-desc');
+    expect(ws.sections.s1.pageIds).toEqual(['p5', 'p4', 'p1', 'p2']);
+
+    ws = W.sortSectionPages(ws, 's1', 'created-asc');
+    expect(ws.sections.s1.pageIds).toEqual(['p2', 'p1', 'p4', 'p5']);
+
+    ws = W.sortSectionPages(ws, 's1', 'updated-desc');
+    expect(ws.sections.s1.pageIds).toEqual(['p5', 'p2', 'p1', 'p4']);
+
+    ws = W.sortSectionPages(ws, 's1', 'updated-asc');
+    expect(ws.sections.s1.pageIds).toEqual(['p4', 'p1', 'p2', 'p5']);
+
+    // Manual reordering resets pageSort back to 'manual'
+    ws = W.movePage(ws, 'p5', 's1', 0);
+    expect(ws.sections.s1.pageSort).toBe('manual');
+    expect(ws.sections.s1.pageIds).toEqual(['p5', 'p4', 'p1', 'p2']);
+
+    ws = W.sortSectionPages(ws, 's1', 'manual');
+    expect(ws.sections.s1.pageSort).toBe('manual');
+    expect(ws.sections.s1.pageIds).toEqual(['p5', 'p4', 'p1', 'p2']);
+  });
 });
 
 const text = (id: string, x = 0, y = 0): TextItem => ({ id, type: 'text', x, y, w: 100, h: 40, doc: P.EMPTY_DOC, variant: 'plain' });
@@ -354,5 +402,32 @@ describe('page operations', () => {
       expect(updatedTarget.doc.content?.[1].attrs?.assetId).toBe('img2');
       expect(updatedTarget.doc.content?.[2].content?.[0].text).toBe('Seconda riga');
     });
+  });
+
+  it('removes a sheet, deletes items on it, shifts subsequent items up, and preserves the last sheet', () => {
+    let p = P.emptyPage('p1');
+    p = P.addSheet(p);
+    p = P.addSheet(p);
+    expect(p.sheets).toHaveLength(3);
+
+    const h0 = p.sheets![0].height;
+    const h1 = p.sheets![1].height;
+    const GAP = 36;
+    const sheet2Y = h0 + GAP + 20;
+    const sheet3Y = h0 + GAP + h1 + GAP + 40;
+
+    p = P.addItems(p, [text('on1', 20, 20), text('on2', 20, sheet2Y), text('on3', 20, sheet3Y)]);
+
+    const removed = P.removeSheet(p, 1);
+    expect(removed.sheets).toHaveLength(2);
+    expect(removed.items.on1).toBeDefined();
+    expect(removed.items.on2).toBeUndefined();
+    expect(removed.items.on3).toBeDefined();
+    expect((removed.items.on3 as TextItem).y).toBe(sheet3Y - (h1 + GAP));
+
+    const oneLeft = P.removeSheet(removed, 1);
+    expect(oneLeft.sheets).toHaveLength(1);
+    const cannotRemoveLast = P.removeSheet(oneLeft, 0);
+    expect(cannotRemoveLast.sheets).toHaveLength(1);
   });
 });

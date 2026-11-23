@@ -12,7 +12,8 @@ import { registerPreFlush } from '../storage/autosave';
 import { useStore } from '../store/useStore';
 import { moveImageIntoContainer } from '../model/pageOps';
 import { openPdfImportDialog } from '../components/PdfImportDialog';
-import { isPdfFile } from '../canvas/actions';
+import { consumeShiftPasteIntent, extractPlainFromHtml, isPdfFile, markShiftPasteIntent, pastePlainInView } from '../canvas/actions';
+import { extractMathAwarePlainText } from './mathPaste';
 
 interface Props {
   id?: string;
@@ -25,8 +26,12 @@ interface Props {
 
 export async function promptLink(editor: import('@tiptap/core').Editor) {
   const prev = (editor.getAttributes('link').href as string | undefined) ?? '';
-  const url = await askText({ title: 'Collegamento', label: 'Indirizzo (URL)', initial: prev, placeholder: 'https://…', confirmLabel: 'Applica' });
-  if (url === null) return;
+  const url = await askText({ title: 'Collegamento', label: 'Indirizzo (URL)', initial: prev, placeholder: 'https://…', keepEditing: true, confirmLabel: 'Applica' });
+  if (editor.isDestroyed) return;
+  if (url === null) {
+    editor.commands.focus();
+    return;
+  }
   const chain = editor.chain().focus().extendMarkRange('link');
   if (url.trim() === '') chain.unsetLink().run();
   else {
@@ -74,6 +79,10 @@ export function EditableRichText({ id, initial, onChange, onExit }: Props) {
           return true;
         }
         const mod = isMac ? event.metaKey : event.ctrlKey;
+        if (mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'v') {
+          markShiftPasteIntent();
+          return false;
+        }
         if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
           event.preventDefault();
           const ed = useActiveEditor.getState().editor;
@@ -107,6 +116,21 @@ export function EditableRichText({ id, initial, onChange, onExit }: Props) {
         return false;
       },
       handlePaste: (view, event) => {
+        const forcePlain = consumeShiftPasteIntent();
+        if (forcePlain && event.clipboardData) {
+          const rawPlain = event.clipboardData.getData('text/plain');
+          const html = event.clipboardData.getData('text/html');
+          const plain = extractMathAwarePlainText(rawPlain, html) || extractPlainFromHtml(html);
+          if (plain) {
+            event.preventDefault();
+            pastePlainInView(view, plain, undefined, { convertMath: true });
+            return true;
+          }
+          if (html) {
+            event.preventDefault();
+            return true;
+          }
+        }
         const allFiles = Array.from(event.clipboardData?.files ?? []);
         const pdfFiles = allFiles.filter((f) => isPdfFile(f));
         if (pdfFiles.length > 0) {
@@ -269,9 +293,26 @@ export function EditableRichText({ id, initial, onChange, onExit }: Props) {
         onExitRef.current('blur');
       }, 0);
     };
+    const onWindowFocus = () => {
+      setTimeout(() => {
+        if (editor.isDestroyed || exited.current) return;
+        if (!document.hasFocus()) return;
+        const a = document.activeElement as HTMLElement | null;
+        if (a && editor.view.dom.contains(a)) return;
+        if (a?.closest?.('[data-keep-editing]')) return;
+        if (useUI.getState().prompt) return;
+        // If focus returned to an unrelated element (e.g. clicking titlebar/canvas/button after Cmd+Tab),
+        // close editing cleanly instead of leaving an orphaned editingId.
+        flush();
+        exited.current = true;
+        onExitRef.current('blur');
+      }, 0);
+    };
     editor.on('blur', onBlur);
+    window.addEventListener('focus', onWindowFocus);
     return () => {
       editor.off('blur', onBlur);
+      window.removeEventListener('focus', onWindowFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);

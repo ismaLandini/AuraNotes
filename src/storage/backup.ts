@@ -114,7 +114,15 @@ export function remapBackup(b: BackupFile): BackupFile {
     for (const sid of nb.sectionIds) {
       const s = ws.sections[sid];
       out.sections[m(sid)] = { ...s, id: m(sid), notebookId: nn, pageIds: s.pageIds.map(m) };
-      for (const pid of s.pageIds) out.pages[m(pid)] = { ...ws.pages[pid], id: m(pid), sectionId: m(sid) };
+      for (const pid of s.pageIds) {
+        const pm = ws.pages[pid];
+        out.pages[m(pid)] = {
+          ...pm,
+          id: m(pid),
+          sectionId: m(sid),
+          ...(pm.pdfAssetId ? { pdfAssetId: m(pm.pdfAssetId) } : {}),
+        };
+      }
     }
   }
   const livePages = new Set(Object.keys(ws.pages));
@@ -134,7 +142,22 @@ export function remapBackup(b: BackupFile): BackupFile {
         }
         items[c.id] = c;
       }
-      return { ...p, id: m(p.id), items, order: p.order.map(m) };
+      return {
+        ...p,
+        id: m(p.id),
+        items,
+        order: p.order.map(m),
+        ...(p.pdfAssetId ? { pdfAssetId: m(p.pdfAssetId) } : {}),
+        ...(p.sheets
+          ? {
+              sheets: p.sheets.map((sh) => ({
+                ...sh,
+                id: m(sh.id),
+                ...(sh.pdfAssetId ? { pdfAssetId: m(sh.pdfAssetId) } : {}),
+              })),
+            }
+          : {}),
+      };
     });
   const assets = b.assets.map((a) => ({ ...a, id: m(a.id) }));
   return { ...b, workspace: out, pages, assets };

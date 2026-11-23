@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CanvasItem, ID, PageContent, Tool, Viewport, Workspace } from '../types';
+import type { CanvasItem, ID, PageContent, SheetDef, Tool, Viewport, Workspace } from '../types';
 import * as W from '../model/workspaceOps';
 import * as P from '../model/pageOps';
 import { buildExampleWorkspace } from '../model/example';
@@ -9,7 +9,7 @@ import { deletePages, loadPage, loadWorkspace } from '../storage/db';
 import { garbageCollectAssets } from '../storage/assets';
 import { cleanupLegacyPdfRasterBlocks } from '../storage/legacyCleanup';
 
-import { useUI } from './ui';
+import { pushNavHistory, useUI } from './ui';
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error';
 
@@ -53,14 +53,19 @@ export interface AppState {
 
   selectNotebook: (id: ID) => void;
   selectSection: (id: ID) => void;
-  openPage: (id: ID, opts?: { keepHome?: boolean }) => Promise<void>;
+  openPage: (id: ID, opts?: { keepHome?: boolean; recordHistory?: boolean }) => Promise<void>;
+  goBack: () => Promise<void>;
   ensurePageLoaded: (id: ID) => Promise<PageContent>;
 
   addNotebook: (name: string) => ID;
   addSection: (notebookId: ID, name: string) => ID;
   createNotebookInHome: (name: string) => ID;
   createSectionInHome: (notebookId: ID, name: string) => ID;
+  createPageInHome: (sectionId: ID, title?: string) => ID | null;
   addPage: (sectionId?: ID, title?: string, templateId?: AcademicTemplateId) => ID | null;
+  addSheetToCurrentPage: (sheetDef?: Partial<SheetDef>) => void;
+  insertSheetAfterCurrent: (afterIndex: number, sheetDef?: Partial<SheetDef>) => void;
+  removeSheetFromCurrent: (sheetIndex: number) => void;
   duplicatePage: (id: ID) => Promise<ID | null>;
   navigateWikiLink: (targetTitle: string) => Promise<ID | null>;
   deletePage: (id: ID) => void;
@@ -190,7 +195,6 @@ export const useStore = create<AppState>((set, get) => ({
     if (!sec) return;
     get().setEditing(null);
     set({ sectionId: id, notebookId: sec.notebookId, selection: [], editingId: null });
-    useUI.getState().set({ homeOpen: false });
     const pid = sec.pageIds[sec.pageIds.length - 1];
     if (pid) void get().openPage(pid);
     else get().addPage(id);
@@ -205,7 +209,27 @@ export const useStore = create<AppState>((set, get) => ({
     // Another call may have loaded it meanwhile.
     const again = get().pages[id];
     if (again) return again;
-    set((s) => ({ pages: { ...s.pages, [id]: loadedPage } }));
+    set((s) => {
+      let ws = s.workspace;
+      const meta = ws.pages[id];
+      const pdfAssetId = loadedPage.pdfAssetId ?? loadedPage.sheets?.find((sh) => sh.pdfAssetId)?.pdfAssetId;
+      const sheetCount = loadedPage.sheets?.length;
+      const firstSheetType = loadedPage.sheets?.[0]?.type ?? (pdfAssetId ? 'pdf' : undefined);
+      if (
+        meta &&
+        ((pdfAssetId && meta.pdfAssetId !== pdfAssetId) ||
+          (sheetCount && meta.sheetCount !== sheetCount) ||
+          (firstSheetType && meta.firstSheetType !== firstSheetType))
+      ) {
+        ws = W.setPageMeta(ws, id, {
+          ...(pdfAssetId ? { pdfAssetId } : {}),
+          ...(sheetCount ? { sheetCount } : {}),
+          ...(firstSheetType ? { firstSheetType } : {}),
+        });
+        dirty.ws = true;
+      }
+      return { workspace: ws, pages: { ...s.pages, [id]: loadedPage } };
+    });
     return loadedPage;
   },
 
@@ -213,6 +237,20 @@ export const useStore = create<AppState>((set, get) => ({
     const ws = get().workspace;
     const meta = ws.pages[id];
     if (!meta) return;
+    const prevPageId = get().pageId;
+    const ui = useUI.getState();
+    if (!opts?.keepHome && opts?.recordHistory !== false) {
+      if (ui.homeOpen) {
+        pushNavHistory({
+          kind: 'home',
+          homeTab: ui.homeTab,
+          homeNotebookId: ui.homeNotebookId,
+          homeSectionId: ui.homeSectionId,
+        });
+      } else if (prevPageId && prevPageId !== id && ws.pages[prevPageId]) {
+        pushNavHistory({ kind: 'page', pageId: prevPageId });
+      }
+    }
     get().setEditing(null);
     const sec = ws.sections[meta.sectionId];
     set({ pageId: id, sectionId: sec.id, notebookId: sec.notebookId, selection: [], editingId: null });
@@ -221,6 +259,32 @@ export const useStore = create<AppState>((set, get) => ({
     }
     rememberPage(id);
     await get().ensurePageLoaded(id);
+  },
+
+  goBack: async () => {
+    const ws = get().workspace;
+    const history = [...useUI.getState().navHistory];
+    while (history.length > 0) {
+      const entry = history.pop()!;
+      if (entry.kind === 'home') {
+        const nbId = entry.homeNotebookId && ws.notebooks[entry.homeNotebookId] ? entry.homeNotebookId : null;
+        const secId = nbId && entry.homeSectionId && ws.sections[entry.homeSectionId] ? entry.homeSectionId : null;
+        useUI.getState().set({
+          navHistory: history,
+          homeOpen: true,
+          homeTab: entry.homeTab,
+          homeNotebookId: nbId,
+          homeSectionId: secId,
+        });
+        return;
+      }
+      if (entry.kind === 'page' && ws.pages[entry.pageId]) {
+        useUI.getState().set({ navHistory: history });
+        await get().openPage(entry.pageId, { recordHistory: false });
+        return;
+      }
+    }
+    useUI.getState().set({ navHistory: [] });
   },
 
   addNotebook: (name) => {
@@ -257,6 +321,57 @@ export const useStore = create<AppState>((set, get) => ({
     return sid;
   },
 
+  createPageInHome: (sectionId, title = 'Pagina senza titolo') => {
+    const ws = get().workspace;
+    if (!ws.sections[sectionId]) return null;
+    const pid = W.newId();
+    const pageContent = P.emptyPage(pid);
+    get().mutateWorkspace((w) =>
+      W.setPageMeta(W.createPage(w, sectionId, title, pid), pid, {
+        sheetCount: 1,
+        firstSheetType: 'blank',
+      }),
+    );
+    set((s) => ({ pages: { ...s.pages, [pid]: pageContent } }));
+    get().markDirty(pid);
+    return pid;
+  },
+
+  addSheetToCurrentPage: (sheetDef?: Partial<SheetDef>) => {
+    const pid = get().pageId;
+    if (!pid) return;
+    get().updatePage((p) => P.addSheet(p, sheetDef), true);
+    const sheetCount = get().pages[pid]?.sheets?.length ?? 1;
+    get().mutateWorkspace((ws) => W.setPageMeta(ws, pid, { sheetCount }));
+  },
+
+  insertSheetAfterCurrent: (afterIndex: number, sheetDef?: Partial<SheetDef>) => {
+    const pid = get().pageId;
+    if (!pid) return;
+    get().updatePage((p) => P.insertSheetAfter(p, afterIndex, sheetDef), true);
+    const sheetCount = get().pages[pid]?.sheets?.length ?? 1;
+    get().mutateWorkspace((ws) => W.setPageMeta(ws, pid, { sheetCount }));
+  },
+
+  removeSheetFromCurrent: (sheetIndex: number) => {
+    const pid = get().pageId;
+    if (!pid) return;
+    const curPage = get().pages[pid];
+    if (!curPage || (curPage.sheets?.length ?? 1) <= 1) return;
+    if (get().editingId) get().setEditing(null);
+    get().setSelection([]);
+    get().updatePage((p) => P.removeSheet(p, sheetIndex), true);
+    const updated = get().pages[pid];
+    const sheetCount = updated?.sheets?.length ?? 1;
+    const firstSheetType = updated?.sheets?.[0]?.type;
+    get().mutateWorkspace((ws) =>
+      W.setPageMeta(ws, pid, {
+        sheetCount,
+        ...(firstSheetType ? { firstSheetType } : {}),
+      }),
+    );
+  },
+
   addPage: (sectionId, title = 'Pagina senza titolo', templateId?: AcademicTemplateId) => {
     const sid = sectionId ?? get().sectionId;
     if (!sid || !get().workspace.sections[sid]) return null;
@@ -287,9 +402,17 @@ export const useStore = create<AppState>((set, get) => ({
       W.setPageMeta(W.createPage(w, meta.sectionId, `${meta.title} (copia)`, pid, idx), pid, {
         searchText: meta.searchText,
         tags: meta.tags ? [...meta.tags] : undefined,
+        sheetCount: meta.sheetCount,
+        firstSheetType: meta.firstSheetType,
+        pdfAssetId: meta.pdfAssetId,
       }),
     );
-    const copy: PageContent = { ...P.addItems(P.emptyPage(pid), items), background: src.background };
+    const copy: PageContent = {
+      ...P.addItems(P.emptyPage(pid), items),
+      background: src.background,
+      ...(src.sheets ? { sheets: src.sheets.map((sh) => ({ ...sh, id: W.newId() })) } : {}),
+      ...(src.pdfAssetId ? { pdfAssetId: src.pdfAssetId } : {}),
+    };
     set((s) => ({ pages: { ...s.pages, [pid]: copy } }));
     get().markDirty(pid);
     await get().openPage(pid);
@@ -382,6 +505,13 @@ export const useStore = create<AppState>((set, get) => ({
     const memPages = get().pages;
     for (const p of Object.values(memPages)) {
       for (const a of P.referencedAssets(p)) memReferenced.add(a);
+    }
+    const ws = get().workspace;
+    for (const meta of Object.values(ws.pages)) {
+      if (meta?.pdfAssetId) memReferenced.add(meta.pdfAssetId);
+    }
+    for (const entry of ws.trash) {
+      if (entry?.page?.pdfAssetId) memReferenced.add(entry.page.pdfAssetId);
     }
     for (const h of Object.values(get().history)) {
       const histPages = excludeFuture ? h.past : [...h.past, ...h.future];

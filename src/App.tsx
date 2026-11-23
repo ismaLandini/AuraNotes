@@ -88,7 +88,9 @@ function useCompact() {
 export default function App() {
   const loaded = useStore((s) => s.loaded);
   const loadError = useStore((s) => s.loadError);
-  const sidebarVisible = useSettings((s) => s.layout.sidebarVisible);
+  const layout = useSettings((s) => s.layout);
+  const sidebarVisible = layout.sidebarVisible;
+  const sidebarExpanded = layout.notebooksVisible || layout.sectionsVisible || layout.pagesVisible;
   const mobileNavOpen = useUI((s) => s.mobileNavOpen);
   const homeOpen = useUI((s) => s.homeOpen);
   const compact = useCompact();
@@ -156,17 +158,6 @@ export default function App() {
         <>
           <Ribbon />
           <div className="main">
-            {!compact && sidebarVisible && (
-              <ErrorBoundary label="Errore nella navigazione">
-                <Sidebar />
-              </ErrorBoundary>
-            )}
-            {compact && mobileNavOpen && (
-              <>
-                <div className="scrim" onClick={() => useUI.getState().set({ mobileNavOpen: false })} />
-                <Sidebar overlay />
-              </>
-            )}
             <main className="workspace">
               <div className="canvas-container">
                 <div className="vertical-tool-rail">
@@ -174,6 +165,20 @@ export default function App() {
                   <ToolPalette />
                 </div>
                 <div className="canvas-wrap">
+                  {!compact && sidebarVisible && (
+                    <>
+                      {sidebarExpanded && <div className="sidebar-page-shadow" data-testid="sidebar-page-shadow" aria-hidden="true" />}
+                      <ErrorBoundary label="Errore nella navigazione">
+                        <Sidebar overlay />
+                      </ErrorBoundary>
+                    </>
+                  )}
+                  {compact && mobileNavOpen && (
+                    <>
+                      <div className="scrim" onClick={() => useUI.getState().set({ mobileNavOpen: false })} />
+                      <Sidebar overlay />
+                    </>
+                  )}
                   <ErrorBoundary label="Errore nel canvas">
                     <Canvas />
                   </ErrorBoundary>

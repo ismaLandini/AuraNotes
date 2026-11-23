@@ -11,6 +11,10 @@
   flex-direction: column;
   --text-ink: #1d1d1f;
   --text-ink-2: #55555c;
+  box-sizing: border-box;
+}
+.sheet.is-pdf-sheet {
+  background: #ffffff;
 }
 .sheet-header {
   display: flex;
@@ -33,6 +37,28 @@
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
+  display: block;
+}
+.print-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+  overflow: visible;
+}
+.sheet-pdf-render-img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 .sheet-footer {
   margin-top: auto;
@@ -106,6 +132,7 @@
     break-after: auto;
     page-break-after: auto;
   }
+  .sheet-pdf-render-img,
   .image-item img,
   .text-item.sticky {
     -webkit-print-color-adjust: exact;

@@ -7,7 +7,7 @@ import { BODY_START, PAGE_MARGIN, TITLE_Y } from '../lib/page';
 import { createTextBlock } from './actions';
 
 /** Page title written on the sheet itself (top-left, like OneNote), with creation date, tags, and backlinks below. */
-export function SheetTitle({ pageId }: { pageId: string }) {
+export function SheetTitle({ pageId, leftOffset = 0 }: { pageId: string; leftOffset?: number }) {
   const ws = useStore((s) => s.workspace);
   const pages = useStore((s) => s.pages);
   const meta = ws.pages[pageId];
@@ -73,7 +73,7 @@ export function SheetTitle({ pageId }: { pageId: string }) {
   const tags = meta.tags ?? [];
 
   return (
-    <div className="sheet-title" style={{ left: PAGE_MARGIN, top: TITLE_Y }} data-ui>
+    <div className="sheet-title" style={{ left: leftOffset + PAGE_MARGIN, top: TITLE_Y }} data-ui>
       <input
         ref={ref}
         className="sheet-title-input"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE_WIDTH, constrainChanged, constrainItem, sheetBottom, sheetLeft, sheetRight, TWO_A4_HEIGHT, SHEET_TOP, MAX_PAGE_ITEM_WIDTH } from './page';
+import { PAGE_WIDTH, A4_WIDTH, A4_HEIGHT, SHEET_TOP, constrainChanged, constrainItem, sheetBottom, sheetLeft, sheetRight, MAX_PAGE_ITEM_WIDTH, computeSheetLayouts, isPdfDocument } from './page';
 import { perimeterAnchorAt, connectorEndpoints, fixedAnchorPoint } from './geometry';
 import * as P from '../model/pageOps';
 import type { CanvasItem, ConnectorItem, ImageItem, PageContent, TextItem } from '../types';
@@ -7,12 +7,18 @@ import type { CanvasItem, ConnectorItem, ImageItem, PageContent, TextItem } from
 const text = (id: string, x: number, w = 200): TextItem => ({ id, type: 'text', x, y: 0, w, h: 40, doc: P.EMPTY_DOC, variant: 'plain' });
 const image = (id: string, x: number, w: number, h: number): ImageItem => ({ id, type: 'image', x, y: 0, w, h, rotation: 0, assetId: 'a', naturalWidth: w, naturalHeight: h, mime: 'image/png' });
 
-describe('two-A4 page geometry and item constraints', () => {
-  it('is 420 mm wide at print scale', () => {
-    expect(PAGE_WIDTH).toBe(1587);
+describe('single A4 page geometry and item constraints', () => {
+  it('is standard single A4 wide (210 mm = 794 px) at print scale', () => {
+    expect(PAGE_WIDTH).toBe(794);
+    expect(A4_WIDTH).toBe(794);
+    expect(A4_HEIGHT).toBe(1123);
   });
-  it('prevents objects from moving past the left margin', () => {
-    expect((constrainItem(text('t', -50), {}) as TextItem).x).toBe(0);
+  it('prevents images from moving past the left margin', () => {
+    expect((constrainItem(image('i', -50, 200, 200), {}) as ImageItem).x).toBe(0);
+  });
+  it('allows text boxes to extend outside sheet or PDF without constraint', () => {
+    expect((constrainItem(text('t', -50), {}) as TextItem).x).toBe(-50);
+    expect((constrainItem(text('t', 1200, 400), {}, 1000) as TextItem).x).toBe(1200);
   });
   it('scales oversized images and text blocks to the max item width (1850 px)', () => {
     const i = constrainItem(image('i', 0, 3000, 600), {}) as ImageItem;
@@ -27,10 +33,34 @@ describe('two-A4 page geometry and item constraints', () => {
     expect((c.items.legacy as TextItem).x).toBe(1700);
     expect((c.items.t as TextItem).x).toBe(1600);
   });
-  it('grows the sheet with the content, at least two vertical A4 tall (~2245 px)', () => {
-    expect(sheetBottom(P.emptyPage('p'))).toBe(SHEET_TOP + TWO_A4_HEIGHT);
+  it('grows the sheet with content or multiple sheets', () => {
+    expect(sheetBottom(P.emptyPage('p'))).toBe(A4_HEIGHT);
     const p = P.addItems(P.emptyPage('p'), [{ ...text('t', 0), y: 3000 }]);
     expect(sheetBottom(p)).toBeGreaterThan(3000);
+  });
+  it('calculates sheet layouts for multi-sheet documents', () => {
+    const empty = P.emptyPage('p');
+    expect(isPdfDocument(empty)).toBe(false);
+    const layouts = computeSheetLayouts(empty);
+    expect(layouts).toHaveLength(1);
+    expect(layouts[0].w).toBe(794);
+    expect(layouts[0].y).toBe(SHEET_TOP);
+    expect(layouts[0].y + layouts[0].h).toBe(1123);
+
+    const withTwoSheets = P.addSheet(empty);
+    const layouts2 = computeSheetLayouts(withTwoSheets);
+    expect(layouts2).toHaveLength(2);
+    expect(layouts2[1].y).toBeGreaterThan(layouts2[0].y + layouts2[0].h);
+
+    const pdfPage: PageContent = {
+      ...empty,
+      pdfAssetId: 'pdf-1',
+      sheets: [{ id: 's1', width: 1040, height: 585, type: 'pdf', pdfPage: 1, pdfAssetId: 'pdf-1' }],
+    };
+    expect(isPdfDocument(pdfPage)).toBe(true);
+    const pdfLayouts = computeSheetLayouts(pdfPage);
+    expect(pdfLayouts[0].y).toBe(0);
+    expect(pdfLayouts[0].h).toBe(585);
   });
   it('calculates horizontal bounds with sheetLeft and sheetRight', () => {
     const empty = P.emptyPage('p');
@@ -42,6 +72,16 @@ describe('two-A4 page geometry and item constraints', () => {
 
     const extendedLeft = P.addItems(empty, [{ ...text('l', -300, 200), x: -300 }]);
     expect(sheetLeft(extendedLeft)).toBeLessThan(-300);
+
+    const pdfPage: PageContent = {
+      ...empty,
+      pdfAssetId: 'pdf-1',
+      sheets: [{ id: 's1', width: 1040, height: 585, type: 'pdf', pdfPage: 1, pdfAssetId: 'pdf-1' }],
+    };
+    const pdfWithItems = P.addItems(pdfPage, [text('r', 2000, 300), { ...text('l', -300, 200), x: -300 }]);
+    // In imported PDF documents, sheet bounds stay rigidly locked to the sheet dimensions
+    expect(sheetLeft(pdfWithItems)).toBe(0);
+    expect(sheetRight(pdfWithItems)).toBe(1040);
   });
 });
 

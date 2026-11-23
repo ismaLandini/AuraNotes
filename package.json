@@ -15,7 +15,9 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "clean": "rm -rf dist test-results src-tauri/target",
+    "clean:all": "rm -rf dist test-results src-tauri/target node_modules"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

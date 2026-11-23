@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Hash, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useUI } from '../store/ui';
-import { renderLatex } from '../editor/extensions';
+import { renderLatex, stripMathDelimiters } from '../editor/extensions';
 import { useStore } from '../store/useStore';
 import { confirmDanger, toast } from '../store/ui';
 import { formatCombo, listShortcuts, onRegistryChange, type ShortcutDef } from '../shortcuts/registry';
@@ -11,10 +11,15 @@ import { docToText } from '../model/pageOps';
 import * as W from '../model/workspaceOps';
 import { revealRect } from '../canvas/viewport';
 
-export function Modal({ title, onClose, children, wide, footer, testid }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; footer?: ReactNode; testid?: string }) {
+export function Modal({ title, onClose, children, wide, footer, testid, restoreFocus = true }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; footer?: ReactNode; testid?: string; restoreFocus?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    prevFocusRef.current = document.activeElement as HTMLElement | null;
+    const el = ref.current?.querySelector<HTMLElement>('[data-autofocus], [autofocus], input, textarea, button.primary');
+    el?.focus();
+  }, []);
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -39,13 +44,9 @@ export function Modal({ title, onClose, children, wide, footer, testid }: { titl
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
-      prev?.focus?.({ preventScroll: true });
+      if (restoreFocus) prevFocusRef.current?.focus?.({ preventScroll: true });
     };
-  }, [onClose]);
-  useLayoutEffect(() => {
-    const el = ref.current?.querySelector<HTMLElement>('[autofocus], input, textarea, button.primary');
-    el?.focus();
-  }, []);
+  }, [onClose, restoreFocus]);
   return (
     <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()} data-ui>
       <div ref={ref} className={`modal glass-strong${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} data-testid={testid}>
@@ -94,7 +95,7 @@ export function ConfirmDialog() {
 function MathPreview({ latex, display }: { latex: string; display: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (ref.current) renderLatex(ref.current, latex, display);
+    if (ref.current) renderLatex(ref.current, stripMathDelimiters(latex), display);
   }, [latex, display]);
   return <div className="math-preview" ref={ref} />;
 }
@@ -113,6 +114,7 @@ function PromptDialogInner({ req }: { req: NonNullable<ReturnType<typeof useUI.g
       title={req.title}
       onClose={() => req.resolve(null)}
       testid="prompt-dialog"
+      restoreFocus={!req.keepEditing}
       footer={
         <>
           <button className="btn" onClick={() => req.resolve(null)}>
@@ -128,7 +130,7 @@ function PromptDialogInner({ req }: { req: NonNullable<ReturnType<typeof useUI.g
         {req.label && <span>{req.label}</span>}
         {req.multiline ? (
           <textarea
-            autoFocus
+            data-autofocus
             value={value}
             placeholder={req.placeholder}
             rows={3}
@@ -141,7 +143,7 @@ function PromptDialogInner({ req }: { req: NonNullable<ReturnType<typeof useUI.g
           />
         ) : (
           <input
-            autoFocus
+            data-autofocus
             value={value}
             placeholder={req.placeholder}
             onChange={(e) => setValue(e.target.value)}

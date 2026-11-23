@@ -6,6 +6,7 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRightToLine,
   ArrowUpToLine,
   Bold,
@@ -16,7 +17,6 @@ import {
   CopyPlus,
   Eraser as ClearIcon,
   FileDown,
-  FileText,
   Group,
   Highlighter,
   Home,
@@ -41,6 +41,7 @@ import {
   Search,
   Settings2,
   Sigma,
+  SlidersHorizontal,
   SquareCode,
   Strikethrough,
   Subscript,
@@ -53,29 +54,32 @@ import {
   Ungroup,
   Unlock,
 } from 'lucide-react';
-import type { Editor } from '@tiptap/core';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { useShallow } from 'zustand/react/shallow';
 import { useActiveEditor } from '../editor/activeEditor';
-import { HIGHLIGHT_COLORS } from '../editor/extensions';
+import { HIGHLIGHT_COLORS, stripMathDelimiters } from '../editor/extensions';
+import { unwrapMathInDoc } from '../editor/mathPaste';
+import * as P from '../model/pageOps';
 import { promptLink } from '../editor/EditableRichText';
 import { TableMenu } from './TableMenu';
 import { ParagraphPanel } from './ParagraphPanel';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
-import { askText, useUI } from '../store/ui';
+import { askText, toast, useUI } from '../store/ui';
 import type { CanvasItem, ConnectorItem, Tool } from '../types';
 import {
+  createTextBlock,
   deleteSelection,
   duplicateSelection,
   groupSelection,
   patchSelection,
   pickImageFiles,
-  pickPdfFile,
   reorderSelection,
   rotateSelectedImages,
   toggleLockSelection,
   ungroupSelection,
 } from '../canvas/actions';
+import { insertionPoint } from '../canvas/viewport';
 import { formatCombo, registerShortcuts } from '../shortcuts/registry';
 import { isFreeImageContainer } from '../model/pageOps';
 
@@ -150,7 +154,7 @@ function RibbonDivider() {
   return <div className="ribbon-divider" aria-hidden="true" />;
 }
 
-export function Popover({ trigger, title, children }: { trigger: ReactNode; title: string; children: (close: () => void) => ReactNode }) {
+export function Popover({ trigger, title, testid, children }: { trigger: ReactNode; title: string; testid?: string; children: (close: () => void) => ReactNode }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -179,7 +183,7 @@ export function Popover({ trigger, title, children }: { trigger: ReactNode; titl
   };
   return (
     <div className="popover-wrap" ref={ref}>
-      <button className={`rb-btn with-chev${open ? ' active' : ''}`} onMouseDown={keepFocus} onClick={toggle} title={title} aria-label={title} aria-expanded={open}>
+      <button className={`rb-btn with-chev${open ? ' active' : ''}`} onMouseDown={keepFocus} onClick={toggle} title={title} aria-label={title} aria-expanded={open} data-testid={testid}>
         {trigger}
         <ChevronDown size={CHEV_SIZE} />
       </button>
@@ -235,18 +239,6 @@ export function Swatches({
 function FormatBar({ editor }: { editor?: Editor | null }) {
   useActiveEditor((s) => s.tick); // re-render on every transaction
   const c = () => (editor ? editor.chain().focus() : null);
-  const canUndoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.past.length ?? 0) > 0);
-  const canRedoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.future.length ?? 0) > 0);
-  const canUndo = editor ? editor.can().undo() : canUndoStore;
-  const canRedo = editor ? editor.can().redo() : canRedoStore;
-  const undo = () => {
-    if (editor) c()?.undo().run();
-    else useStore.getState().undo();
-  };
-  const redo = () => {
-    if (editor) c()?.redo().run();
-    else useStore.getState().redo();
-  };
   const hasPage = useStore((s) => !!s.pageId);
   const level = editor ? ([1, 2, 3] as const).find((l) => editor.isActive('heading', { level: l })) : undefined;
   const ts = editor ? (editor.getAttributes('textStyle') as { fontSize?: string; fontFamily?: string; color?: string }) : {};
@@ -255,38 +247,112 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
   const codeLang = (editor ? (editor.getAttributes('codeBlock').language as string | null) : null) ?? '';
 
   const insertMath = async (display: boolean) => {
-    if (!editor) return;
-    const sel = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, ' ');
+    const activeEd = editor && !editor.isDestroyed ? editor : useActiveEditor.getState().editor;
+    if (!activeEd || activeEd.isDestroyed) {
+      const page = useStore.getState().currentPage();
+      if (!page) {
+        toast('Apri o crea una pagina prima di inserire un’equazione', 'error');
+        return;
+      }
+      const latex = await askText({
+        title: display ? 'Equazione (blocco)' : 'Equazione in linea',
+        label: 'LaTeX',
+        initial: '',
+        placeholder: '\\frac{a}{b}',
+        mathPreview: true,
+        multiline: display,
+        confirmLabel: 'Inserisci',
+      });
+      const clean = latex ? stripMathDelimiters(latex).trim() : '';
+      if (!clean) return;
+      const mathNode: JSONContent = {
+        type: display ? 'mathBlock' : 'mathInline',
+        attrs: { latex: clean },
+      };
+      const doc: JSONContent = {
+        type: 'doc',
+        content: display ? [mathNode, { type: 'paragraph' }] : [{ type: 'paragraph', content: [mathNode] }],
+      };
+      createTextBlock(insertionPoint(), { doc, edit: true });
+      return;
+    }
+
+    const sel = activeEd.state.doc.textBetween(activeEd.state.selection.from, activeEd.state.selection.to, ' ');
     const latex = await askText({
       title: display ? 'Equazione (blocco)' : 'Equazione in linea',
       label: 'LaTeX',
-      initial: sel,
+      initial: stripMathDelimiters(sel),
       placeholder: '\\frac{a}{b}',
       mathPreview: true,
       multiline: display,
+      keepEditing: true,
       confirmLabel: 'Inserisci',
     });
-    if (latex?.trim()) c()?.insertMath(latex.trim(), display).run();
+    const targetEd = !activeEd.isDestroyed ? activeEd : useActiveEditor.getState().editor;
+    if (targetEd && !targetEd.isDestroyed) {
+      const clean = latex ? stripMathDelimiters(latex).trim() : '';
+      if (clean) {
+        targetEd.chain().focus().insertMath(clean, display).run();
+      } else {
+        targetEd.commands.focus();
+      }
+      requestAnimationFrame(() => {
+        if (!targetEd.isDestroyed) targetEd.commands.focus();
+      });
+    }
+  };
+
+  const unwrapMathFormatting = () => {
+    const activeEd = editor && !editor.isDestroyed ? editor : useActiveEditor.getState().editor;
+    if (activeEd && !activeEd.isDestroyed) {
+      const ok = activeEd.chain().focus().unwrapMath().run();
+      if (!ok) {
+        toast('Seleziona o posiziona il cursore su un’equazione', 'info');
+      }
+      requestAnimationFrame(() => {
+        if (!activeEd.isDestroyed) activeEd.commands.focus();
+      });
+      return;
+    }
+    const st = useStore.getState();
+    const curPage = st.currentPage();
+    if (!curPage || st.selection.length === 0) {
+      toast('Seleziona un testo o un’equazione prima di rimuovere la formattazione matematica', 'info');
+      return;
+    }
+    const patches: Record<string, { doc: JSONContent }> = {};
+    for (const id of st.selection) {
+      const it = curPage.items[id];
+      if (!it || (it.type !== 'text' && it.type !== 'container')) continue;
+      const { doc, changed } = unwrapMathInDoc(it.doc);
+      if (changed) patches[id] = { doc };
+    }
+    if (Object.keys(patches).length === 0) {
+      toast('Nessuna equazione trovata nella selezione', 'info');
+      return;
+    }
+    st.updatePage((p) => P.updateItems(p, patches), true);
+  };
+
+  const insertSymbol = (sym: string) => {
+    const activeEd = editor && !editor.isDestroyed ? editor : useActiveEditor.getState().editor;
+    if (activeEd && !activeEd.isDestroyed) {
+      activeEd.chain().focus().insertContent(sym).run();
+      return;
+    }
+    const page = useStore.getState().currentPage();
+    if (!page) {
+      toast('Apri o crea una pagina prima di inserire un simbolo', 'error');
+      return;
+    }
+    createTextBlock(insertionPoint(), {
+      doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: sym }] }] },
+      edit: true,
+    });
   };
 
   return (
     <div className="format-bar" data-testid="format-bar">
-      {/* 1. Modifica */}
-      <RibbonSection label="Modifica">
-        <RibbonRow>
-          <Btn onClick={undo} title={`Annulla (${formatCombo('mod+z')})`} disabled={!canUndo}>
-            <Undo2 size={ICON_SIZE} />
-          </Btn>
-        </RibbonRow>
-        <RibbonRow>
-          <Btn onClick={redo} title={`Ripeti (${formatCombo('mod+shift+z')})`} disabled={!canRedo}>
-            <Redo2 size={ICON_SIZE} />
-          </Btn>
-        </RibbonRow>
-      </RibbonSection>
-
-      <RibbonDivider />
-
       {/* 2. Carattere */}
       <RibbonSection label="Carattere">
         <RibbonRow>
@@ -475,18 +541,6 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
             <ImagePlus size={ICON_SIZE} />
             <span className="rb-compact-label">Immagine</span>
           </Btn>
-          <Btn
-            onClick={() => {
-              const edId = useStore.getState().editingId;
-              pickPdfFile(edId ? { containerId: edId } : undefined);
-            }}
-            disabled={!hasPage}
-            title="Inserisci → PDF…"
-            testid="insert-pdf-btn"
-          >
-            <FileText size={ICON_SIZE} />
-            <span className="rb-compact-label">PDF…</span>
-          </Btn>
           <Popover
             title="Tabella"
             trigger={
@@ -533,10 +587,20 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
                 <button className="menu-item" onClick={() => (close(), void insertMath(true))}>
                   Equazione a blocco
                 </button>
+                <button className="menu-item" onClick={() => (close(), unwrapMathFormatting())}>
+                  Rimuovi formattazione matematica
+                </button>
                 <div className="menu-hint">Simboli rapidi</div>
                 <div className="symbol-grid">
                   {['α', 'β', 'γ', 'δ', 'ε', 'θ', 'λ', 'μ', 'π', 'σ', 'φ', 'ω', 'Δ', 'Σ', 'Ω', '∞', '≈', '≠', '≤', '≥', '±', '×', '÷', '→', '⇒', '⇔', '∀', '∃', '∈', '∉', '⊂', '∪', '∩', '∫', '∂', '√', '∇', '°'].map((s) => (
-                    <button key={s} className="sym" onClick={() => c()?.insertContent(s).run()}>
+                    <button
+                      key={s}
+                      className="sym"
+                      onClick={() => {
+                        if (!editor || editor.isDestroyed) close();
+                        insertSymbol(s);
+                      }}
+                    >
                       {s}
                     </button>
                   ))}
@@ -586,10 +650,15 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
                       label: 'Titolo della pagina da collegare (o creare al clic)',
                       initial: '',
                       placeholder: 'Es. Teorema di Bayes',
+                      keepEditing: true,
                       confirmLabel: 'Inserisci',
                     }).then((title) => {
+                      const active = useActiveEditor.getState().editor;
+                      if (!active || active.isDestroyed) return;
                       if (title?.trim()) {
-                        useActiveEditor.getState().editor?.chain().focus().insertContent(`[[${title.trim()}]]`).run();
+                        active.chain().focus().insertContent(`[[${title.trim()}]]`).run();
+                      } else {
+                        active.commands.focus();
                       }
                     });
                   }}
@@ -899,52 +968,131 @@ export function RibbonUtilities() {
 
   return (
     <div className="ribbon-utilities" data-ui role="group" aria-label="Strumenti">
-      <div className="ribbon-row">
-        <button className="rb-btn icon-btn" onClick={() => ui.set({ searchOpen: true })} title={`Cerca (${formatCombo('mod+k')})`} aria-label="Cerca">
-          <Search size={ICON_SIZE} />
-          <span className="rb-compact-label">Cerca</span>
-        </button>
-        <button
-          className={`rb-btn icon-btn${ui.outlineOpen ? ' active' : ''}`}
-          onClick={() => ui.set({ outlineOpen: !ui.outlineOpen })}
-          disabled={!hasPage}
-          title={`Indice della pagina (${formatCombo('mod+shift+o')})`}
-          aria-label="Indice della pagina"
-          data-testid="toggle-outline"
+      <div className="ribbon-section-content">
+        <Popover
+          title="Strumenti"
+          testid="ribbon-utilities-btn"
+          trigger={<SlidersHorizontal size={18} />}
         >
-          <ListTree size={ICON_SIZE} />
-          <span className="rb-compact-label">Indice</span>
-        </button>
-        <button
-          className="rb-btn icon-btn"
-          onClick={() => ui.set({ exportOpen: true })}
-          disabled={!hasPage}
-          title={`Stampa / Esporta PDF (${formatCombo('mod+p')})`}
-          aria-label="Esporta PDF"
-          data-testid="open-export"
-        >
-          <FileDown size={ICON_SIZE} />
-          <span className="rb-compact-label">PDF</span>
-        </button>
-      </div>
-      <div className="ribbon-row">
-        <button className="rb-btn icon-btn" onClick={() => ui.set({ shortcutsOpen: true })} title={`Scorciatoie (${formatCombo('mod+/')})`} aria-label="Scorciatoie da tastiera">
-          <Keyboard size={ICON_SIZE} />
-          <span className="rb-compact-label">Tasti</span>
-        </button>
-        <button className="rb-btn icon-btn" onClick={() => ui.set({ settingsOpen: true })} title="Impostazioni" aria-label="Impostazioni">
-          <Settings2 size={ICON_SIZE} />
-          <span className="rb-compact-label">Opzioni</span>
-        </button>
+          {(close) => (
+            <div className="menu-col" style={{ minWidth: 220 }}>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  ui.set({ searchOpen: true });
+                }}
+                title={`Cerca (${formatCombo('mod+k')})`}
+                aria-label="Cerca"
+              >
+                <Search size={ICON_SIZE} />
+                <span>Cerca</span>
+                <span className="menu-chev">{formatCombo('mod+k')}</span>
+              </button>
+              <button
+                className={`menu-item${ui.outlineOpen ? ' active' : ''}`}
+                onClick={() => {
+                  close();
+                  ui.set({ outlineOpen: !ui.outlineOpen });
+                }}
+                disabled={!hasPage}
+                title={`Indice della pagina (${formatCombo('mod+shift+o')})`}
+                aria-label="Indice della pagina"
+                data-testid="toggle-outline"
+              >
+                <ListTree size={ICON_SIZE} />
+                <span>Indice della pagina</span>
+                <span className="menu-chev">{formatCombo('mod+shift+o')}</span>
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  ui.set({ exportOpen: true });
+                }}
+                disabled={!hasPage}
+                title={`Stampa / Esporta PDF (${formatCombo('mod+p')})`}
+                aria-label="Esporta PDF"
+                data-testid="open-export"
+              >
+                <FileDown size={ICON_SIZE} />
+                <span>Esporta PDF</span>
+                <span className="menu-chev">{formatCombo('mod+p')}</span>
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  ui.set({ shortcutsOpen: true });
+                }}
+                title={`Scorciatoie (${formatCombo('mod+/')})`}
+                aria-label="Scorciatoie da tastiera"
+              >
+                <Keyboard size={ICON_SIZE} />
+                <span>Scorciatoie da tastiera</span>
+                <span className="menu-chev">{formatCombo('mod+/')}</span>
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  ui.set({ settingsOpen: true });
+                }}
+                title="Impostazioni"
+                aria-label="Impostazioni"
+              >
+                <Settings2 size={ICON_SIZE} />
+                <span>Impostazioni</span>
+              </button>
+            </div>
+          )}
+        </Popover>
       </div>
       <div className="ribbon-section-label">Strumenti</div>
     </div>
   );
 }
 
+function RibbonModificaSection({ editor }: { editor?: Editor | null }) {
+  useActiveEditor((s) => s.tick);
+  const canUndoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.past.length ?? 0) > 0);
+  const canRedoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.future.length ?? 0) > 0);
+  const canUndo = editor ? editor.can().undo() : canUndoStore;
+  const canRedo = editor ? editor.can().redo() : canRedoStore;
+  const undo = () => {
+    if (editor) editor.chain().focus().undo().run();
+    else useStore.getState().undo();
+  };
+  const redo = () => {
+    if (editor) editor.chain().focus().redo().run();
+    else useStore.getState().redo();
+  };
+  return (
+    <>
+      <RibbonSection label="Modifica" className="ribbon-modifica-section">
+        <RibbonRow>
+          <Btn onClick={undo} title={`Annulla (${formatCombo('mod+z')})`} disabled={!canUndo}>
+            <Undo2 size={ICON_SIZE} />
+          </Btn>
+        </RibbonRow>
+        <RibbonRow>
+          <Btn onClick={redo} title={`Ripeti (${formatCombo('mod+shift+z')})`} disabled={!canRedo}>
+            <Redo2 size={ICON_SIZE} />
+          </Btn>
+        </RibbonRow>
+      </RibbonSection>
+      <RibbonDivider />
+    </>
+  );
+}
+
 function RibbonHomeSection() {
+  const canGoBack = useUI((s) => s.navHistory.length > 0);
   const goHome = () => {
-    useUI.getState().set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: null });
+    useUI.getState().set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: null, homeSectionId: null });
+  };
+  const goBack = () => {
+    void useStore.getState().goBack();
   };
   return (
     <>
@@ -952,6 +1100,11 @@ function RibbonHomeSection() {
         <RibbonRow>
           <Btn onClick={goHome} title="Schermata iniziale (Quaderni)" testid="ribbon-home-btn">
             <Home size={18} />
+          </Btn>
+        </RibbonRow>
+        <RibbonRow>
+          <Btn onClick={goBack} disabled={!canGoBack} title="Torna alla schermata precedente" testid="ribbon-back-btn">
+            <ArrowLeft size={18} />
           </Btn>
         </RibbonRow>
       </RibbonSection>
@@ -972,28 +1125,45 @@ export function Ribbon() {
     }),
   );
   const ref = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState({ over: false, end: false });
+  const [overflow, setOverflow] = useState({ over: false, start: true, end: false });
   useEffect(() => {
-    const el = ref.current?.querySelector('.ribbon-tools') as HTMLElement | null;
+    const ribbonEl = ref.current;
+    if (!ribbonEl) return;
+    const el = ribbonEl.querySelector('.ribbon-tools') as HTMLElement | null;
     if (!el) return;
-    const update = () => setOverflow({ over: el.scrollWidth > el.clientWidth + 2, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2 });
+
+    const update = () =>
+      setOverflow({
+        over: el.scrollWidth > el.clientWidth + 2,
+        start: el.scrollLeft <= 2,
+        end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2,
+      });
+
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     if (el.firstElementChild) ro.observe(el.firstElementChild);
     el.addEventListener('scroll', update, { passive: true });
-    // Vertical wheel scrolls the toolbar horizontally.
+    window.addEventListener('resize', update, { passive: true });
+
+    // Only horizontal trackpad swipe/scroll (deltaX) scrolls the middle sections horizontally;
+    // vertical wheel/scroll NEVER scrolls the toolbar and NEVER bubbles to or moves the canvas.
     const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth) {
-        el.scrollLeft += e.deltaY;
-        e.preventDefault();
+      e.stopPropagation();
+      e.preventDefault();
+      if (el.scrollWidth > el.clientWidth && e.deltaX !== 0) {
+        const mult = e.deltaMode === 1 ? 28 : (e.deltaMode === 2 ? el.clientWidth : 1);
+        el.scrollLeft += e.deltaX * mult;
+        update();
       }
     };
-    el.addEventListener('wheel', onWheel, { passive: false });
+
+    ribbonEl.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       ro.disconnect();
       el.removeEventListener('scroll', update);
-      el.removeEventListener('wheel', onWheel);
+      window.removeEventListener('resize', update);
+      ribbonEl.removeEventListener('wheel', onWheel);
     };
   }, [editingId, tool, selected.length, hasPage]);
 
@@ -1010,11 +1180,23 @@ export function Ribbon() {
     content = <FormatBar editor={editor ?? null} />;
   }
 
+  const ribbonClasses = `ribbon glass${overflow.over ? ' overflowing' : ''}${overflow.start ? ' at-start' : ''}${overflow.end ? ' at-end' : ''}`;
+
   if (!hasPage) {
     return (
-      <div ref={ref} className="ribbon glass" data-ui data-keep-editing role="toolbar" aria-label="Opzioni di scrittura">
-        <div className="ribbon-tools">
+      <div
+        ref={ref}
+        className={ribbonClasses}
+        data-ui
+        data-keep-editing
+        role="toolbar"
+        aria-label="Opzioni di scrittura"
+      >
+        <div className="ribbon-fixed-left">
           <RibbonHomeSection />
+          <RibbonModificaSection editor={null} />
+        </div>
+        <div className="ribbon-tools">
           <FormatBar editor={null} />
         </div>
         <RibbonUtilities />
@@ -1023,9 +1205,12 @@ export function Ribbon() {
   }
 
   return (
-    <div ref={ref} className={`ribbon glass${overflow.over ? ' overflowing' : ''}${overflow.end ? ' at-end' : ''}`} data-ui data-keep-editing role="toolbar" aria-label="Opzioni contestuali">
-      <div className="ribbon-tools">
+    <div ref={ref} className={ribbonClasses} data-ui data-keep-editing role="toolbar" aria-label="Opzioni contestuali">
+      <div className="ribbon-fixed-left">
         <RibbonHomeSection />
+        <RibbonModificaSection editor={editor ?? null} />
+      </div>
+      <div className="ribbon-tools">
         {content}
       </div>
       <RibbonUtilities />

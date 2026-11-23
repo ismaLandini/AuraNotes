@@ -77,6 +77,10 @@ fn main() {
                 let id = event.id().as_ref();
                 if id == "open-backups" {
                     let _ = open_backups_in_finder(&backups_dir(&menu_user_data));
+                } else if let Some(dir) = id.strip_prefix("snap-") {
+                    if let Some(win) = app_handle.get_webview_window("main") {
+                        let _ = commands::snap_window(win, dir.to_string());
+                    }
                 } else if is_frontend_menu_command(id) {
                     let _ = app_handle.emit("glassnotes:menu", id);
                 }
@@ -158,6 +162,8 @@ fn main() {
             commands::set_theme,
             commands::flush_done,
             commands::open_external,
+            commands::read_clipboard_text,
+            commands::snap_window,
         ])
         .run(tauri::generate_context!())
         .expect("Errore durante l'avvio di AuraNotes");

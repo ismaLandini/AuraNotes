@@ -7,6 +7,8 @@ import { toast } from '../store/ui';
 import { createTextBlock, deleteSelection, duplicateSelection, groupSelection, ungroupSelection, nudgeSelection, reorderSelection, selectAll, toggleLockSelection, finishEditing, cancelActiveGesture } from '../canvas/actions';
 import { centerContent, fitContent, insertionPoint, resetZoom, zoomAt } from '../canvas/viewport';
 import { TOOL_DEFS } from '../components/ToolPalette';
+import { isEditableTarget } from './registry';
+import { desktop } from '../desktop';
 
 const hasPage = () => !!useStore.getState().pageId;
 
@@ -210,7 +212,7 @@ export function buildShortcuts(): ShortcutDef[] {
     { id: 'copy', keys: ['mod+c'], label: 'Copia', category: 'Appunti', scope: 'text' },
     { id: 'cut', keys: ['mod+x'], label: 'Taglia', category: 'Appunti', scope: 'text' },
     { id: 'paste', keys: ['mod+v'], label: 'Incolla (testo, immagini o oggetti)', category: 'Appunti', scope: 'text' },
-    { id: 'paste-plain', keys: ['mod+shift+v'], label: 'Incolla senza formattazione (nel testo)', category: 'Appunti', scope: 'text' },
+    { id: 'paste-plain', keys: ['mod+shift+v'], label: 'Incolla con formato e colori di sistema', category: 'Appunti', scope: 'text' },
 
     // ------------------------------------------------------------- text formatting (editor)
     { id: 'f-bold', keys: ['mod+b'], label: 'Grassetto', category: 'Formattazione testo', scope: 'text' },
@@ -245,8 +247,15 @@ export function buildShortcuts(): ShortcutDef[] {
       category: 'Disegno',
       scope: 'canvas',
       run: () => {
-        // Never switch tools while a text block is being edited, even if focus briefly left it.
-        if (!hasPage() || useStore.getState().editingId) return false;
+        if (!hasPage()) return false;
+        const st = useStore.getState();
+        if (st.editingId) {
+          const active = document.activeElement as HTMLElement | null;
+          if (isEditableTarget(active) || active?.closest?.('[data-keep-editing]') || useUI.getState().prompt) {
+            return false;
+          }
+          finishEditing(st.editingId);
+        }
         const cur = useStore.getState().tool;
         if (cur === t.tool) {
           useStore.getState().setTool('select');
@@ -258,6 +267,17 @@ export function buildShortcuts(): ShortcutDef[] {
   }
   defs.push({ id: 'draw-shift', keys: ['⇧'], label: 'Tieni ⇧ mentre disegni: linee a 45°, quadrati e cerchi', category: 'Disegno', scope: 'text' });
   defs.push({ id: 'draw-alt', keys: ['⌥'], label: 'Tieni ⌥ ridimensionando un’immagine: proporzioni libere', category: 'Disegno', scope: 'text' });
+  const snap = (dir: 'left' | 'right' | 'top' | 'bottom') => () => {
+    const fn = desktop()?.snapWindow;
+    if (!fn) return false;
+    void fn(dir);
+  };
+  defs.push(
+    { id: 'snap-left', keys: ['ctrl+home', 'ctrl+left'], label: 'Finestra metà sinistra', category: 'Zoom e vista', scope: 'global', run: snap('left') },
+    { id: 'snap-right', keys: ['ctrl+end', 'ctrl+right'], label: 'Finestra metà destra', category: 'Zoom e vista', scope: 'global', run: snap('right') },
+    { id: 'snap-top', keys: ['ctrl+pageup', 'ctrl+up'], label: 'Finestra metà superiore', category: 'Zoom e vista', scope: 'global', run: snap('top') },
+    { id: 'snap-bottom', keys: ['ctrl+pagedown', 'ctrl+down'], label: 'Finestra metà inferiore', category: 'Zoom e vista', scope: 'global', run: snap('bottom') },
+  );
   return defs;
 }
 

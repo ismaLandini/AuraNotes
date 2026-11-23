@@ -1,20 +1,19 @@
-import type { JSONContent } from '@tiptap/core';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { generateJSON } from '@tiptap/core';
-import type { CanvasItem, ID, NoteContainerItem, PageContent, Point, TextItem } from '../types';
+import { Node as ProseMirrorNode, Slice } from '@tiptap/pm/model';
+import type { CanvasItem, ID, NoteContainerItem, PageContent, Point, Rect, TextItem } from '../types';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
-import { toast } from '../store/ui';
+import { isModalOpen, toast, useUI } from '../store/ui';
 import * as P from '../model/pageOps';
 import { newId } from '../model/workspaceOps';
 import { dataUrlToBlob, importImageBlob, SUPPORTED_IMAGE_TYPES } from '../storage/assets';
 import { getViewport, insertionPoint, revealRect, screenSize } from './viewport';
-import { PAGE_WIDTH } from '../lib/page';
+import { computeSheetLayouts, isPdfDocument, PAGE_WIDTH, SHEET_TOP, type SheetLayout } from '../lib/page';
 import { itemBounds, unionRects } from '../lib/geometry';
 import { sharedExtensions } from '../editor/extensions';
 import { useActiveEditor } from '../editor/activeEditor';
-import { openPdfImportDialog, pickPdfFile } from '../components/PdfImportDialog';
-
-export { pickPdfFile };
+import { extractMathAwarePlainText, hasMathNodes, parseTextWithMath } from '../editor/mathPaste';
 
 const CLIP_MARKER = 'glassnote-clip:';
 
@@ -65,11 +64,64 @@ export function selectAll(): void {
   useStore.getState().setSelection(p.order.filter((id) => !p.items[id]?.parentId));
 }
 
+function findSheetForPoint(p: PageContent, y: number): SheetLayout | null {
+  const layouts = computeSheetLayouts(p);
+  if (layouts.length === 0) return null;
+  if (y < layouts[0].y) return layouts[0];
+  for (let i = 0; i < layouts.length; i++) {
+    const l = layouts[i];
+    if (y >= l.y && y < l.y + l.h) return l;
+    const next = layouts[i + 1];
+    if (next && y >= l.y + l.h && y < next.y) {
+      return y - (l.y + l.h) <= next.y - y ? l : next;
+    }
+  }
+  return layouts[layouts.length - 1];
+}
+
+function clampDeltaToSheet(
+  p: PageContent,
+  bounds: Rect,
+  dx: number,
+  dy: number,
+  targetY?: number,
+): { dx: number; dy: number } {
+  const l = findSheetForPoint(p, targetY ?? bounds.y + bounds.h / 2);
+  if (!l) return { dx, dy };
+  const isPdf = isPdfDocument(p);
+  const minY = l.index === 0 && !isPdf && bounds.y >= 0 ? 0 : l.y;
+  let nextDx = dx;
+  let nextDy = dy;
+  if (bounds.w <= l.w) {
+    const minDx = l.x - bounds.x;
+    const maxDx = l.x + l.w - bounds.w - bounds.x;
+    nextDx = Math.max(minDx, Math.min(maxDx, nextDx));
+  }
+  const sheetH = l.y + l.h - minY;
+  if (bounds.h <= sheetH) {
+    const minDy = minY - bounds.y;
+    const maxDy = l.y + l.h - bounds.h - bounds.y;
+    nextDy = Math.max(minDy, Math.min(maxDy, nextDy));
+  }
+  return { dx: nextDx, dy: nextDy };
+}
+
 export function duplicateSelection(): void {
+  const st = useStore.getState();
+  if (st.editingId) finishEditing(st.editingId);
   const p = page();
   const ids = topLevelSelection();
   if (!p || !ids.length) return;
-  const { items } = P.cloneItems(p.items, p.order, ids, 24, 24);
+  const rects = ids.map((id) => (p.items[id] ? itemBounds(p.items[id], p.items) : null)).filter((r): r is Rect => Boolean(r));
+  const b = unionRects(rects);
+  let dx = 24;
+  let dy = 24;
+  if (b) {
+    const clamped = clampDeltaToSheet(p, b, dx, dy);
+    dx = clamped.dx;
+    dy = clamped.dy;
+  }
+  const { items } = P.cloneItems(p.items, p.order, ids, dx, dy);
   useStore.getState().updatePage((pg) => P.addItems(pg, items));
   useStore.getState().setSelection(items.filter((i) => !i.parentId || !items.some((x) => x.id === i.parentId)).map((i) => i.id));
 }
@@ -87,7 +139,7 @@ export function nudgeSelection(dx: number, dy: number): void {
       if (parent?.type === 'image') patches[id] = P.translateLocal(it, dx / parent.w, dy / parent.h);
     } else {
       const patch = P.translateItem(it, dx, dy);
-      if ('x' in patch && typeof patch.x === 'number') {
+      if (it.type !== 'text' && it.type !== 'container' && 'x' in patch && typeof patch.x === 'number') {
         const itemW = 'w' in it && typeof it.w === 'number' ? it.w : 0;
         patch.x = Math.max(0, Math.min(PAGE_WIDTH - itemW, patch.x));
       }
@@ -178,12 +230,13 @@ export function finishEditing(id: ID): void {
     activeEd && !activeEd.isDestroyed && (activeEd.storage as Record<string, unknown>)?.containerId === id
       ? activeEd.getJSON()
       : null;
-  if (s.editingId === id) s.setEditing(null);
+  // Sync liveDoc before setEditing(null) so setEditing's empty-block pruning sees the latest content.
+  if (liveDoc) {
+    s.updatePage((pg) => (pg.items[id] ? P.updateItems(pg, { [id]: { doc: liveDoc } }) : pg), false);
+  }
+  if (useStore.getState().editingId === id) s.setEditing(null);
   const keepId = useStore.getState().editingId;
-  s.updatePage((pg) => {
-    const synced = liveDoc && pg.items[id] ? P.updateItems(pg, { [id]: { doc: liveDoc } }) : pg;
-    return P.pruneEmptyTextItems(synced, keepId);
-  }, false);
+  s.updatePage((pg) => P.pruneEmptyTextItems(pg, keepId), false);
   const after = useStore.getState().currentPage();
   if (after) {
     const nextSel = useStore.getState().selection.filter((x) => after.items[x]);
@@ -209,13 +262,8 @@ export async function insertImageFiles(
 ): Promise<number> {
   const pdfs = files.filter((f) => isPdfFile(f));
   if (pdfs.length > 0) {
-    const activeContainerId = dropTarget?.containerId ?? useStore.getState().editingId ?? undefined;
-    openPdfImportDialog(pdfs[0], {
-      at,
-      containerId: activeContainerId,
-      insertIndex: dropTarget?.insertIndex,
-    });
-    return 1;
+    toast('Per importare un PDF, usa il tasto "Importa PDF" nella Home all\'interno di una sezione', 'info');
+    return 0;
   }
 
   const images = files.filter((f) => f.type.startsWith('image/'));
@@ -291,7 +339,9 @@ export async function insertImageFiles(
     return count;
   }
 
+  const curPage = page();
   const base = at ?? insertionPoint();
+  const targetSheet = curPage ? findSheetForPoint(curPage, base.y) : null;
   const vp = getViewport();
   const { w: sw } = screenSize();
   const maxW = Math.min(640, (sw / vp.zoom) * 0.6);
@@ -305,11 +355,20 @@ export async function insertImageFiles(
       const scale = Math.min(1, maxW / img.width);
       const w = Math.max(40, Math.round(img.width * scale));
       const h = Math.max(30, Math.round(img.height * scale));
+      let x = Math.round(base.x + offset - (at ? 0 : w / 2));
+      let y = Math.round(base.y + offset - (at ? 0 : h / 2));
+      if (!at && targetSheet) {
+        const minY = targetSheet.index === 0 && !isPdfDocument(curPage) ? 4 : targetSheet.y + 8;
+        const maxX = targetSheet.x + Math.max(0, targetSheet.w - w);
+        const maxY = targetSheet.y + Math.max(0, targetSheet.h - h);
+        x = Math.max(targetSheet.x, Math.min(maxX, x));
+        y = Math.max(minY, Math.min(maxY, y));
+      }
       created.push({
         id: newId(),
         type: 'container',
-        x: Math.round(base.x + offset - (at ? 0 : w / 2)),
-        y: Math.round(base.y + offset - (at ? 0 : h / 2)),
+        x,
+        y,
         w,
         h,
         freeImage: true,
@@ -414,25 +473,47 @@ function pasteInternal(clip: ClipPayload): void {
   const s = useStore.getState();
   const cur = page();
   if (!cur) return;
-  // When pasting onto another page, place the content near the insertion point.
   let dx = offset;
   let dy = offset;
   const sameVisible = cur.order.some((id) => clip.items[id]);
-  if (!sameVisible) {
-    const rects = clip.ids.map((id) => itemBounds(clip.items[id], clip.items));
-    const b = unionRects(rects);
-    if (b) {
-      const at = insertionPoint(false);
+  const rects = clip.ids
+    .map((id) => (clip.items[id] ? itemBounds(clip.items[id], clip.items) : null))
+    .filter((r): r is Rect => Boolean(r));
+  const b = unionRects(rects);
+  if (b) {
+    const vp = getViewport();
+    const { w: vw, h: vh } = screenSize();
+    const at = insertionPoint(true);
+    const targetSheet = findSheetForPoint(cur, at.y);
+    const origSheet = findSheetForPoint(cur, b.y + b.h / 2);
+    const sameSheet = !targetSheet || !origSheet || targetSheet.index === origSheet.index;
+    const origVisible =
+      sameVisible &&
+      sameSheet &&
+      b.x + b.w > vp.x &&
+      b.y + b.h > vp.y &&
+      b.x < vp.x + vw / vp.zoom &&
+      b.y < vp.y + vh / vp.zoom;
+    if (!origVisible) {
       dx = at.x - (b.x + b.w / 2) + offset - 24;
       dy = at.y - (b.y + b.h / 2) + offset - 24;
+      const clamped = clampDeltaToSheet(cur, b, dx, dy, at.y);
+      dx = clamped.dx;
+      dy = clamped.dy;
+    } else {
+      const clamped = clampDeltaToSheet(cur, b, dx, dy);
+      dx = clamped.dx;
+      dy = clamped.dy;
     }
   }
   const { items } = P.cloneItems(clip.items, clip.order, clip.ids, dx, dy);
+  if (items.length === 0) return;
   s.updatePage((p) => P.addItems(p, items));
   const sel = items.filter((i) => !i.parentId || !items.some((x) => x.id === i.parentId)).map((i) => i.id);
   s.setSelection(sel);
-  const b = unionRects(sel.map((id) => itemBounds(items.find((i) => i.id === id)!, Object.fromEntries(items.map((i) => [i.id, i])))));
-  if (b) revealRect(b);
+  const pastedMap = Object.fromEntries(items.map((i) => [i.id, i]));
+  const pastedBounds = unionRects(sel.map((id) => itemBounds(pastedMap[id], pastedMap)));
+  if (pastedBounds) revealRect(pastedBounds);
 }
 
 /** Paste from the internal clipboard (used by the keyboard shortcut fallback). */
@@ -444,17 +525,159 @@ export function pasteFromInternal(): boolean {
 
 export function htmlToDoc(html: string): JSONContent | null {
   try {
-    const cleaned = html.replace(/<meta[^>]*>/gi, '');
-    return generateJSON(cleaned, sharedExtensions());
+    const cleaned = html
+      .replace(/<head[\s\S]*?<\/head>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<title[\s\S]*?<\/title>/gi, '')
+      .replace(/<meta[^>]*>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+    const parsed = generateJSON(cleaned, sharedExtensions());
+    return parsed && !P.isDocEmpty(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
+let shiftPasteIntentAt = 0;
+
+/** Records a recent Shift+Cmd/Ctrl+V keydown so the immediately following paste event strips external styling. */
+export function markShiftPasteIntent(): void {
+  shiftPasteIntentAt = Date.now();
+}
+
+/** Consumes the pending Shift+Cmd/Ctrl+V intent if it occurred within the current input window. */
+export function consumeShiftPasteIntent(): boolean {
+  const active = shiftPasteIntentAt > 0 && Date.now() - shiftPasteIntentAt < 400;
+  shiftPasteIntentAt = 0;
+  return active;
+}
+
+export function extractPlainFromHtml(html: string): string {
+  if (!html) return '';
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return doc.body?.textContent ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function insertPlainIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string): boolean {
+  if (el.readOnly || el.disabled) return false;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? start;
+  const next = el.value.slice(0, start) + text + el.value.slice(end);
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  try {
+    el.setSelectionRange(start + text.length, start + text.length);
+  } catch {
+    /* some input types (e.g. number) do not support selection ranges */
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
+/** Inserts plain text into a ProseMirror view using the destination/system style and colors. */
+export function pastePlainInView(
+  view: Editor['view'],
+  text: string,
+  event?: ClipboardEvent,
+  opts: { convertMath?: boolean } = {},
+): boolean {
+  if (!text) return false;
+  if (opts.convertMath) {
+    const doc = parseTextWithMath(text);
+    if (hasMathNodes(doc)) {
+      const pmDoc = ProseMirrorNode.fromJSON(view.state.schema, doc);
+      const isSingleParagraph = pmDoc.childCount === 1 && pmDoc.firstChild?.type.name === 'paragraph';
+      const slice = isSingleParagraph
+        ? new Slice(pmDoc.firstChild!.content, 0, 0)
+        : new Slice(
+            pmDoc.content,
+            pmDoc.firstChild?.isTextblock ? 1 : 0,
+            pmDoc.lastChild?.isTextblock ? 1 : 0,
+          );
+      view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+      return true;
+    }
+  }
+  const ev =
+    event ??
+    (typeof ClipboardEvent !== 'undefined'
+      ? new ClipboardEvent('paste')
+      : (new Event('paste') as unknown as ClipboardEvent));
+  return view.pasteText(text, ev);
+}
+
+function pasteTextBlockOnCanvas(doc: JSONContent): ID | null {
+  const cur = page();
+  const at = insertionPoint();
+  const l = cur ? findSheetForPoint(cur, at.y) : null;
+  const minY = l ? (l.index === 0 && !isPdfDocument(cur) ? 4 : l.y + 12) : isPdfDocument(cur) ? 0 : SHEET_TOP;
+  const maxY = l ? l.y + l.h - 48 : Number.POSITIVE_INFINITY;
+  const minX = l ? l.x : 0;
+  const maxX = l ? Math.max(minX, l.x + l.w - 420) : Number.POSITIVE_INFINITY;
+  const x = Math.max(minX, Math.min(maxX, Math.round(at.x - 40)));
+  const y = Math.max(minY, Math.min(maxY, Math.round(at.y - 20)));
+  const id = createTextBlock({ x, y }, { doc, edit: false, w: 420 });
+  if (id) {
+    const st = useStore.getState();
+    if (st.tool !== 'select') st.setTool('select');
+    st.setSelection([id]);
+  }
+  return id;
+}
+
+/**
+ * Pastes plain text adopting the system/destination format and theme colors (no external fonts, sizes, or colors).
+ * Works across inputs/textareas, active rich-text editors, and the freeform canvas.
+ */
+export function pastePlainText(text: string): boolean {
+  if (!text) return false;
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    return insertPlainIntoInput(active, text);
+  }
+  if (isModalOpen()) return false;
+  const s = useStore.getState();
+  const editor = useActiveEditor.getState().editor;
+  if (s.editingId && editor && !editor.isDestroyed) {
+    if (!editor.view.hasFocus()) editor.view.focus();
+    return pastePlainInView(editor.view, text, undefined, { convertMath: true });
+  }
+  if (!useUI.getState().homeOpen && s.pageId) {
+    return pasteTextBlockOnCanvas(parseTextWithMath(text)) !== null;
+  }
+  return false;
+}
+
 /** Handles a paste event on the canvas: PDF files, images, GlassNote objects or external text. */
-export async function handlePaste(e: ClipboardEvent): Promise<boolean> {
+export async function handlePaste(e: ClipboardEvent, opts: { plain?: boolean } = {}): Promise<boolean> {
   const dt = e.clipboardData;
   if (!dt) return false;
+  const html = dt.getData('text/html');
+  const text = dt.getData('text/plain');
+  const s = useStore.getState();
+  const activeEd = useActiveEditor.getState().editor;
+
+  if (opts.plain) {
+    const plainText =
+      (internalClip && html.includes(internalClip.marker) ? clipPlainText(internalClip) : '') ||
+      extractMathAwarePlainText(text, html) ||
+      extractPlainFromHtml(html);
+    if (!plainText) return false;
+    e.preventDefault();
+    if (s.editingId && activeEd && !activeEd.isDestroyed) {
+      if (!activeEd.view.hasFocus()) activeEd.view.focus();
+      return pastePlainInView(activeEd.view, plainText, undefined, { convertMath: true });
+    }
+    pasteTextBlockOnCanvas(parseTextWithMath(plainText));
+    return true;
+  }
   const files: File[] = [];
   const pdfFiles: File[] = [];
   for (const item of Array.from(dt.items)) {
@@ -477,18 +700,19 @@ export async function handlePaste(e: ClipboardEvent): Promise<boolean> {
   }
   if (pdfFiles.length > 0) {
     e.preventDefault();
-    const editingId = useStore.getState().editingId;
-    openPdfImportDialog(pdfFiles[0], editingId ? { containerId: editingId } : undefined);
+    toast('Per importare un PDF, usa il tasto "Importa PDF" nella Home all\'interno di una sezione', 'info');
     return true;
   }
-  const html = dt.getData('text/html');
-  const text = dt.getData('text/plain');
   if (internalClip && html.includes(internalClip.marker)) {
     e.preventDefault();
+    if (s.editingId) finishEditing(s.editingId);
     pasteInternal(internalClip);
+    if (useStore.getState().tool !== 'select') useStore.getState().setTool('select');
     return true;
   }
-  if (files.length) {
+  const onlyImagePayload =
+    !text.trim() || (!html.trim() && files.some((f) => Boolean(f.name) && f.name === text.trim()));
+  if (files.length && onlyImagePayload) {
     e.preventDefault();
     await insertImageFiles(files);
     return true;
@@ -501,10 +725,25 @@ export async function handlePaste(e: ClipboardEvent): Promise<boolean> {
     return true;
   }
   if (html || text) {
+    if (s.editingId && activeEd && !activeEd.isDestroyed) {
+      e.preventDefault();
+      if (!activeEd.view.hasFocus()) activeEd.view.focus();
+      if (html && htmlToDoc(html)) {
+        const ev =
+          typeof ClipboardEvent !== 'undefined'
+            ? new ClipboardEvent('paste')
+            : (new Event('paste') as unknown as ClipboardEvent);
+        return activeEd.view.pasteHTML(html, ev);
+      }
+      if (text) {
+        return pastePlainInView(activeEd.view, text);
+      }
+      return false;
+    }
+    const doc = (html && htmlToDoc(html)) || (text ? P.textDocFromPlain(text) : null);
+    if (!doc) return false;
     e.preventDefault();
-    const doc = (html && htmlToDoc(html)) || P.textDocFromPlain(text);
-    const at = insertionPoint();
-    createTextBlock({ x: at.x - 40, y: at.y - 20 }, { doc, edit: false, w: 420 });
+    pasteTextBlockOnCanvas(doc);
     return true;
   }
   return false;

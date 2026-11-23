@@ -7,11 +7,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { flush, hasUnsavedChanges } from './storage/autosave';
 import { useStore } from './store/useStore';
-import { useUI } from './store/ui';
+import { useUI, toast } from './store/ui';
 import { useSettings } from './store/settings';
 import { buildBackup } from './storage/backup';
 import { exportBackup, pickBackupFile } from './components/SettingsDialog';
-import { pickPdfFile } from './canvas/actions';
+import { importPdfAsDocument } from './pdf/importPdfDocument';
+import { pickPdfFile } from './components/PdfImportDialog';
+import { consumeShiftPasteIntent, pastePlainText } from './canvas/actions';
 
 export interface DesktopBridge {
   platform: string;
@@ -22,6 +24,8 @@ export interface DesktopBridge {
   savePdf(title: string): Promise<string | null>;
   info(): Promise<{ version: string; userData: string; backups: string }>;
   setTheme(theme: string, dark: boolean): Promise<void>;
+  readClipboardText?(): Promise<string>;
+  snapWindow?(direction: 'left' | 'right' | 'top' | 'bottom' | 'fill'): Promise<void>;
 }
 
 function hasTauriInternals(): boolean {
@@ -81,6 +85,12 @@ const tauriBridge: DesktopBridge = {
   async setTheme(theme: string, dark: boolean) {
     await invoke('set_theme', { theme, dark });
   },
+  readClipboardText() {
+    return invoke<string>('read_clipboard_text');
+  },
+  async snapWindow(direction: 'left' | 'right' | 'top' | 'bottom' | 'fill') {
+    await invoke('snap_window', { direction });
+  },
 };
 
 export function desktop(): DesktopBridge | null {
@@ -121,9 +131,45 @@ function runMenu(cmd: string) {
     case 'new-page':
       if (st.sectionId) st.addPage();
       break;
-    case 'import-pdf':
-      pickPdfFile();
+    case 'import-pdf': {
+      const activeSecId = ui.homeOpen ? (ui.homeSectionId ?? st.sectionId) : (st.sectionId ?? ui.homeSectionId);
+      if (!ui.homeOpen && st.pageId) {
+        pickPdfFile();
+        break;
+      }
+      if (!activeSecId) {
+        toast('Per importare un PDF, apri o seleziona prima una sezione', 'info');
+        break;
+      }
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/pdf,.pdf';
+      input.style.position = 'fixed';
+      input.style.top = '-10000px';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      const cleanup = () => {
+        input.remove();
+      };
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        cleanup();
+        if (file) {
+          try {
+            toast('Importazione del PDF in corso...', 'info', 2500);
+            const res = await importPdfAsDocument(file, file.name, activeSecId);
+            toast(`"${res.title}" importato con successo (${res.sheetCount} pagine)`, 'success');
+            await useStore.getState().openPage(res.pageId);
+          } catch (err) {
+            console.error('Errore importazione PDF:', err);
+            toast('Impossibile importare il PDF. Verifica che il file sia valido.', 'error');
+          }
+        }
+      };
+      input.oncancel = cleanup;
+      input.click();
       break;
+    }
     case 'export-pdf':
       if (st.pageId) ui.set({ exportOpen: true });
       break;
@@ -163,6 +209,15 @@ function runMenu(cmd: string) {
       break;
     case 'open-backups':
       void desktop()?.openBackups();
+      break;
+    case 'paste-match-style':
+      consumeShiftPasteIntent();
+      void desktop()
+        ?.readClipboardText?.()
+        .then((text) => {
+          if (text) pastePlainText(text);
+        })
+        .catch((err) => console.warn('Incolla e adatta stile non riuscito', err));
       break;
   }
 }

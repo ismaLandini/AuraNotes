@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
 import { StaticRichText, docToHTML } from './StaticRichText';
+import { stripMathDelimiters } from './extensions';
 import { htmlToDoc } from '../canvas/actions';
 
 describe('rich text rendering', () => {
@@ -88,5 +89,21 @@ describe('rich text rendering', () => {
     expect(imgNode).toBeDefined();
     expect(imgNode?.attrs?.assetId).toBe('ast-xyz');
     expect(imgNode?.attrs?.width).toBe(320);
+  });
+
+  it('strips outer LaTeX math delimiters when detecting a single formula', () => {
+    expect(stripMathDelimiters('\\({q_1, q_2, \\dots, q_n}\\)')).toBe('{q_1, q_2, \\dots, q_n}');
+    expect(stripMathDelimiters('  \\( f(x) = \\left( x + 1 \\right) \\)  ')).toBe('f(x) = \\left( x + 1 \\right)');
+    expect(stripMathDelimiters('\\[\\int_0^1 x\\,dx\\]')).toBe('\\int_0^1 x\\,dx');
+    expect(stripMathDelimiters('\\[\\begin{aligned} a &= 1 \\\\[2mm] b &= 2 \\end{aligned}\\]')).toBe(
+      '\\begin{aligned} a &= 1 \\\\[2mm] b &= 2 \\end{aligned}',
+    );
+    expect(stripMathDelimiters('$$\\sum_{i=1}^n i$$')).toBe('\\sum_{i=1}^n i');
+    expect(stripMathDelimiters('$x^2 + y^2$')).toBe('x^2 + y^2');
+    expect(stripMathDelimiters('$x + \\$5$')).toBe('x + \\$5');
+    // Multiple formulas or unmatched delimiters should remain unchanged
+    expect(stripMathDelimiters('\\(a\\) + \\(b\\)')).toBe('\\(a\\) + \\(b\\)');
+    expect(stripMathDelimiters('$100 + $200')).toBe('$100 + $200');
+    expect(stripMathDelimiters('a^2 + b^2')).toBe('a^2 + b^2');
   });
 });

@@ -1,9 +1,19 @@
 import { nanoid } from 'nanoid';
-import type { ID, Notebook, PageContent, PageMeta, Section, TrashEntry, Workspace } from '../types';
+import type { ID, Notebook, PageContent, PageMeta, PageSortOrder, Section, TrashEntry, Workspace } from '../types';
 import { SCHEMA_VERSION } from '../types';
 import { pageSearchText } from './pageOps';
 
 export const PALETTE = ['#5b8def', '#9b6bf2', '#e86aa6', '#f0805a', '#e9b949', '#4fbf8b', '#3fb6c9', '#8a94a6'];
+
+export const PAGE_SORT_OPTIONS: ReadonlyArray<{ value: PageSortOrder; label: string }> = [
+  { value: 'manual', label: 'Ordine personalizzato' },
+  { value: 'title-asc', label: 'Nome (A–Z)' },
+  { value: 'title-desc', label: 'Nome (Z–A)' },
+  { value: 'created-desc', label: 'Data di introduzione (più recenti)' },
+  { value: 'created-asc', label: 'Data di introduzione (meno recenti)' },
+  { value: 'updated-desc', label: 'Ultima modifica (più recenti)' },
+  { value: 'updated-asc', label: 'Ultima modifica (meno recenti)' },
+];
 
 export const newId = (): ID => nanoid(12);
 
@@ -33,17 +43,53 @@ export function createSection(ws: Workspace, notebookId: ID, name: string, id: I
   };
 }
 
+export function comparePagesBySort(a: PageMeta, b: PageMeta, sort: PageSortOrder): number {
+  switch (sort) {
+    case 'title-asc':
+      return (a.title || 'Senza titolo').localeCompare(b.title || 'Senza titolo', 'it', { numeric: true, sensitivity: 'base' }) || a.createdAt - b.createdAt;
+    case 'title-desc':
+      return (b.title || 'Senza titolo').localeCompare(a.title || 'Senza titolo', 'it', { numeric: true, sensitivity: 'base' }) || b.createdAt - a.createdAt;
+    case 'created-desc':
+      return b.createdAt - a.createdAt || (a.title || '').localeCompare(b.title || '', 'it', { numeric: true, sensitivity: 'base' });
+    case 'created-asc':
+      return a.createdAt - b.createdAt || (a.title || '').localeCompare(b.title || '', 'it', { numeric: true, sensitivity: 'base' });
+    case 'updated-desc':
+      return b.updatedAt - a.updatedAt || b.createdAt - a.createdAt;
+    case 'updated-asc':
+      return a.updatedAt - b.updatedAt || a.createdAt - b.createdAt;
+    case 'manual':
+    default:
+      return 0;
+  }
+}
+
+function sortPageIdsWithMeta(pageIds: ID[], pages: Record<ID, PageMeta>, sort: PageSortOrder): ID[] {
+  if (sort === 'manual') return pageIds;
+  return pageIds.slice().sort((idA, idB) => {
+    const a = pages[idA];
+    const b = pages[idB];
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return comparePagesBySort(a, b, sort);
+  });
+}
+
 export function createPage(ws: Workspace, sectionId: ID, title: string, id: ID = newId(), index?: number): Workspace {
   const sec = ws.sections[sectionId];
   if (!sec) throw new Error('Sezione inesistente');
   const now = Date.now();
   const page: PageMeta = { id, sectionId, title, createdAt: now, updatedAt: now, searchText: '' };
-  const pageIds = [...sec.pageIds];
+  const pages = { ...ws.pages, [id]: page };
+  let pageIds = [...sec.pageIds];
   pageIds.splice(index ?? pageIds.length, 0, id);
+  if (index === undefined && sec.pageSort && sec.pageSort !== 'manual') {
+    pageIds = sortPageIdsWithMeta(pageIds, pages, sec.pageSort);
+  }
   return {
     ...ws,
     sections: { ...ws.sections, [sectionId]: { ...sec, pageIds, updatedAt: now } },
-    pages: { ...ws.pages, [id]: page },
+    pages,
   };
 }
 
@@ -62,7 +108,18 @@ export function renameSection(ws: Workspace, id: ID, name: string): Workspace {
 export function renamePage(ws: Workspace, id: ID, title: string): Workspace {
   const p = ws.pages[id];
   if (!p) return ws;
-  return { ...ws, pages: { ...ws.pages, [id]: { ...p, title, updatedAt: Date.now() } } };
+  const now = Date.now();
+  const pages = { ...ws.pages, [id]: { ...p, title, updatedAt: now } };
+  const sec = ws.sections[p.sectionId];
+  if (sec && (sec.pageSort === 'title-asc' || sec.pageSort === 'title-desc')) {
+    const pageIds = sortPageIdsWithMeta(sec.pageIds, pages, sec.pageSort);
+    return {
+      ...ws,
+      pages,
+      sections: { ...ws.sections, [sec.id]: { ...sec, pageIds, updatedAt: now } },
+    };
+  }
+  return { ...ws, pages };
 }
 
 export function setNotebookColor(ws: Workspace, id: ID, color: string): Workspace {
@@ -134,6 +191,26 @@ export function moveSection(ws: Workspace, sectionId: ID, toNotebookId: ID): Wor
   };
 }
 
+/** Sorts all pages in a section according to `sort` and records the active sort mode on the section. */
+export function sortSectionPages(ws: Workspace, sectionId: ID, sort: PageSortOrder): Workspace {
+  const sec = ws.sections[sectionId];
+  if (!sec) return ws;
+  if (sort === 'manual') {
+    return {
+      ...ws,
+      sections: { ...ws.sections, [sectionId]: { ...sec, pageSort: 'manual' } },
+    };
+  }
+  const pageIds = sortPageIdsWithMeta(sec.pageIds, ws.pages, sort);
+  return {
+    ...ws,
+    sections: {
+      ...ws.sections,
+      [sectionId]: { ...sec, pageIds, pageSort: sort, updatedAt: Date.now() },
+    },
+  };
+}
+
 /** Moves a page within its section or into another section (at index, default end). */
 export function movePage(ws: Workspace, pageId: ID, toSectionId: ID, toIndex?: number): Workspace {
   const page = ws.pages[pageId];
@@ -143,9 +220,17 @@ export function movePage(ws: Workspace, pageId: ID, toSectionId: ID, toIndex?: n
   const now = Date.now();
   if (source.id === target.id) {
     const from = source.pageIds.indexOf(pageId);
+    if (from < 0) return ws;
     return {
       ...ws,
-      sections: { ...ws.sections, [source.id]: { ...source, pageIds: moveInArray(source.pageIds, from, toIndex ?? source.pageIds.length - 1) } },
+      sections: {
+        ...ws.sections,
+        [source.id]: {
+          ...source,
+          pageIds: moveInArray(source.pageIds, from, toIndex ?? source.pageIds.length - 1),
+          ...(source.pageSort && source.pageSort !== 'manual' ? { pageSort: 'manual' as const } : {}),
+        },
+      },
     };
   }
   const srcIds = source.pageIds.filter((p) => p !== pageId);

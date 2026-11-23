@@ -12,6 +12,7 @@ pub const MENU_COMMANDS: &[&str] = &[
     "export-notebook-pdf",
     "export-backup",
     "import-backup",
+    "paste-match-style",
     "search",
     "toggle-sidebar",
     "shortcuts",
@@ -121,6 +122,13 @@ pub fn build_italian_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
     let cut = PredefinedMenuItem::cut(app, Some("Taglia"))?;
     let copy = PredefinedMenuItem::copy(app, Some("Copia"))?;
     let paste = PredefinedMenuItem::paste(app, Some("Incolla"))?;
+    let paste_match_style = MenuItem::with_id(
+        app,
+        "paste-match-style",
+        "Incolla e adatta lo stile",
+        true,
+        Some("CmdOrCtrl+Shift+V"),
+    )?;
     let select_all = PredefinedMenuItem::select_all(app, Some("Seleziona tutto"))?;
     let search = MenuItem::with_id(app, "search", "Cerca…", true, Some("CmdOrCtrl+K"))?;
 
@@ -135,6 +143,7 @@ pub fn build_italian_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
             &cut,
             &copy,
             &paste,
+            &paste_match_style,
             &select_all,
             &sep()?,
             &search,
@@ -168,13 +177,27 @@ pub fn build_italian_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
     // 5. Finestra menu
     let minimize = PredefinedMenuItem::minimize(app, Some("Minimizza"))?;
     let maximize = PredefinedMenuItem::maximize(app, Some("Ingrandisci"))?;
+    let snap_left = MenuItem::with_id(app, "snap-left", "Affianca a sinistra", true, None::<&str>)?;
+    let snap_right = MenuItem::with_id(app, "snap-right", "Affianca a destra", true, None::<&str>)?;
+    let snap_top = MenuItem::with_id(app, "snap-top", "Metà superiore", true, None::<&str>)?;
+    let snap_bottom = MenuItem::with_id(app, "snap-bottom", "Metà inferiore", true, None::<&str>)?;
     let close_win_2 = PredefinedMenuItem::close_window(app, Some("Chiudi finestra"))?;
 
     let window_submenu = Submenu::with_items(
         app,
         "Finestra",
         true,
-        &[&minimize, &maximize, &sep()?, &close_win_2],
+        &[
+            &minimize,
+            &maximize,
+            &sep()?,
+            &snap_left,
+            &snap_right,
+            &snap_top,
+            &snap_bottom,
+            &sep()?,
+            &close_win_2,
+        ],
     )?;
 
     Menu::with_items(
@@ -204,6 +227,7 @@ mod tests {
             "export-notebook-pdf",
             "export-backup",
             "import-backup",
+            "paste-match-style",
             "search",
             "toggle-sidebar",
             "shortcuts",

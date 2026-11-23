@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react';
-import { Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, PanelLeft, Pen, Plus, Scan, Spline, Square, StickyNote, Type } from 'lucide-react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, PanelLeft, Pen, Plus, Spline, Square, StickyNote, Type } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import type { BackgroundPattern, Tool } from '../types';
 import { useSettings } from '../store/settings';
 import { useUI } from '../store/ui';
 import { formatCombo } from '../shortcuts/registry';
-import { centerContent, fitContent, resetZoom, zoomAt } from '../canvas/viewport';
+import { fitContent, resetZoom, zoomAt } from '../canvas/viewport';
 import { defaultViewport } from '../canvas/viewport';
 
 export function NavMiniMenu({ compact }: { compact?: boolean }) {
@@ -54,6 +54,21 @@ export const TOOL_DEFS: Array<{ tool: Tool; label: string; key: string; icon: Re
 export function ToolPalette() {
   const tool = useStore((s) => s.tool);
   const hasPage = useStore((s) => !!s.pageId);
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.stopPropagation();
+      if (el.scrollHeight <= el.clientHeight + 1) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [hasPage]);
+
   if (!hasPage) return null;
 
   const onToolClick = (t: Tool) => {
@@ -67,7 +82,13 @@ export function ToolPalette() {
   };
 
   return (
-    <nav className="tool-palette glass" data-ui aria-label="Strumenti di disegno" data-testid="tool-palette">
+    <nav
+      ref={navRef}
+      className="tool-palette glass"
+      data-ui
+      aria-label="Strumenti di disegno"
+      data-testid="tool-palette"
+    >
       {TOOL_DEFS.map((t, i) => {
         const sep = i > 0 && t.group !== TOOL_DEFS[i - 1].group;
         return (
@@ -136,9 +157,6 @@ export function ZoomControls() {
       <span className="sep" />
       <button className="icon-btn sm" onClick={fitContent} title={`Adatta contenuto (${formatCombo('shift+1')})`} aria-label="Adatta il contenuto alla vista">
         <Maximize size={15} />
-      </button>
-      <button className="icon-btn sm" onClick={centerContent} title={`Centra contenuto (${formatCombo('shift+2')})`} aria-label="Centra il contenuto">
-        <Scan size={15} />
       </button>
     </div>
   );

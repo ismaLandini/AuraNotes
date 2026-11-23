@@ -260,7 +260,30 @@ html.is-desktop .window-titlebar,
 .sidebar.overlay.glass {
   background: var(--field);
   border-right: 1px solid var(--menu-line);
-  box-shadow: var(--shadow-pop);
+  box-shadow: 16px 0 42px rgba(8, 20, 48, 0.34), 4px 0 14px rgba(8, 20, 48, 0.2);
+}
+.sidebar-page-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(8, 20, 48, 0.26) 0%,
+    rgba(8, 20, 48, 0.14) 38%,
+    rgba(8, 20, 48, 0.05) 72%,
+    rgba(8, 20, 48, 0.02) 100%
+  );
+  transition: opacity 0.2s ease;
+}
+:root[data-theme='dark'] .sidebar-page-shadow {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.45) 0%,
+    rgba(0, 0, 0, 0.24) 40%,
+    rgba(0, 0, 0, 0.08) 75%,
+    rgba(0, 0, 0, 0.03) 100%
+  );
 }
 .panel {
   min-width: 130px;
@@ -477,6 +500,15 @@ html.is-desktop .window-titlebar,
   background: var(--field);
   z-index: 30;
   box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+.ribbon-fixed-left {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  background: var(--field);
 }
 .ribbon-tools {
   display: flex;
@@ -486,6 +518,11 @@ html.is-desktop .window-titlebar,
   scrollbar-width: none;
   flex: 1;
   min-width: 0;
+  position: relative;
+  z-index: 1;
+  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: contain;
 }
 .ribbon-tools::-webkit-scrollbar {
   display: none;
@@ -495,11 +532,15 @@ html.is-desktop .window-titlebar,
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 2px 4px 1px 6px;
+  padding: 1px 5px 0 6px;
   gap: 2px;
+  min-width: 54px;
   flex-shrink: 0;
   border-left: 1px solid var(--menu-line);
   margin-left: 2px;
+  position: relative;
+  z-index: 2;
+  background: var(--field);
 }
 .ribbon-divider {
   background: var(--menu-line);
@@ -1587,6 +1628,42 @@ mark {
   padding: 0;
 }
 
+/* Sidebar sort selector */
+.sidebar-sort-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 6px 6px;
+  padding: 0 8px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--menu-select-bg);
+  border: 1px solid var(--menu-select-border);
+  color: var(--menu-ink-muted);
+}
+.sidebar-sort-icon {
+  flex-shrink: 0;
+}
+.sidebar-sort-select {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--menu-ink);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sidebar-sort-select option {
+  color-scheme: light;
+  background: var(--surface);
+  color: var(--ink);
+}
+:root[data-theme='dark'] .sidebar-sort-select option {
+  color-scheme: dark;
+}
+
 /* Sidebar tag filter chips & page row tags */
 .sidebar-tag-filter {
   display: flex;
@@ -2110,6 +2187,45 @@ mark {
   color: var(--ink);
 }
 
+.home-sort-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.home-sort-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--surface);
+}
+
+.home-sort-icon {
+  flex-shrink: 0;
+  color: var(--ink-3);
+}
+
+.home-sort-select {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.home-sort-select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .home-content {
   flex: 1;
   overflow-y: auto;
@@ -2145,7 +2261,8 @@ mark {
 }
 
 .home-grid.pages {
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  gap: 16px;
 }
 
 /* Folder & Book Cards */
@@ -2411,6 +2528,29 @@ mark {
   min-height: 255px;
 }
 
+.home-new-card.page,
+.home-new-card.pdf {
+  min-height: 200px;
+  padding: 14px 10px;
+  gap: 8px;
+  border-radius: 13px;
+}
+
+.home-new-card.page .home-new-card-icon,
+.home-new-card.pdf .home-new-card-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.home-new-card.page .home-new-card-label,
+.home-new-card.pdf .home-new-card-label {
+  font-size: 12.5px;
+}
+
+.home-new-card-icon.pdf-icon {
+  color: #e11d48;
+}
+
 .home-new-card:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -2434,24 +2574,327 @@ mark {
   font-weight: 600;
 }
 
-/* Page Cards in Recent / Favorites / Filter */
+/* Page Cards in Recent / Favorites / Filter / Section Pages */
 .home-page-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  border-radius: 14px;
+  border-radius: 13px;
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-float);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  min-height: 200px;
 }
 
 .home-page-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   border-color: var(--accent);
   box-shadow: var(--shadow-pop);
+}
+
+.home-page-card:hover .home-star-btn,
+.home-page-card:hover .home-more-btn {
+  opacity: 1;
+}
+
+.home-page-card.is-reorderable .home-cover-stage {
+  cursor: grab;
+}
+
+.home-page-card.is-reorderable .home-cover-stage:active {
+  cursor: grabbing;
+}
+
+.home-page-card.is-dragging-source {
+  opacity: 0.4;
+  transform: scale(0.96);
+  border: 1.5px dashed var(--accent);
+}
+
+.home-page-card.drop-before {
+  border-left-color: var(--accent);
+  box-shadow: -5px 0 0 -1px var(--accent), 0 0 0 2px var(--accent-soft);
+}
+
+.home-page-card.drop-before::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.home-page-card.drop-after {
+  border-right-color: var(--accent);
+  box-shadow: 5px 0 0 -1px var(--accent), 0 0 0 2px var(--accent-soft);
+}
+
+.home-page-card.drop-after::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  border-radius: 3px 0 0 3px;
+  background: var(--accent);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.home-page-drag-ghost {
+  position: fixed;
+  z-index: 1200;
+  pointer-events: none;
+  width: 150px;
+  border-radius: 12px;
+  transform: translate(-50%, -55%) rotate(-2deg) scale(1.04);
+  box-shadow: var(--shadow-pop);
+  border: 1.5px solid var(--accent);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.home-page-drag-ghost .home-cover-stage {
+  height: 112px;
+}
+
+.home-drag-ghost-title {
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Stage displaying the set-of-pages document bundle */
+.home-cover-stage {
+  position: relative;
+  height: 132px;
+  width: 100%;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+:root[data-theme='dark'] .home-cover-stage {
+  background: rgba(18, 21, 28, 0.75);
+}
+
+/* Document stack (set di pagine) */
+.home-doc-stack {
+  position: relative;
+  width: 86px;
+  height: 112px;
+  transition: transform 0.16s ease;
+}
+
+.home-page-card:hover .home-doc-stack {
+  transform: translateY(-2px);
+}
+
+/* Background sheets peeking out to give the multi-sheet set look */
+.doc-sheet-under {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid rgba(16, 36, 70, 0.12);
+  box-shadow: 0 1px 3px rgba(16, 36, 70, 0.06);
+  pointer-events: none;
+}
+
+:root[data-theme='dark'] .doc-sheet-under {
+  background: #242833;
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.doc-sheet-under.sheet-layer-2 {
+  transform: translate(5px, 4px) rotate(1.8deg);
+  z-index: 1;
+  opacity: 0.85;
+}
+
+.doc-sheet-under.sheet-layer-1 {
+  transform: translate(2.5px, 2px) rotate(0.8deg);
+  z-index: 2;
+  opacity: 0.95;
+}
+
+.home-page-card:hover .doc-sheet-under.sheet-layer-2 {
+  transform: translate(6.5px, 5px) rotate(2.4deg);
+}
+
+.home-page-card:hover .doc-sheet-under.sheet-layer-1 {
+  transform: translate(3.5px, 2.8px) rotate(1.2deg);
+}
+
+/* Front sheet: the initial page serving as cover */
+.doc-sheet-front {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid rgba(16, 36, 70, 0.16);
+  box-shadow: 0 2px 7px rgba(16, 36, 70, 0.1), 0 1px 2px rgba(16, 36, 70, 0.06);
+  z-index: 3;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+:root[data-theme='dark'] .doc-sheet-front {
+  background: #1b1e26;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.45);
+}
+
+.doc-sheet-front.is-pdf {
+  background: #ffffff;
+}
+
+/* PDF cover image inside front sheet */
+.doc-cover-pdf-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #ffffff;
+}
+
+.doc-cover-pdf-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.doc-cover-pdf-status {
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.doc-cover-badge.pdf {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e11d48;
+  color: #ffffff;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  z-index: 4;
+}
+
+/* Notes initial page front sheet */
+.doc-cover-note-front {
+  width: 100%;
+  height: 100%;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  background: var(--paper-white, #ffffff);
+}
+
+:root[data-theme='dark'] .doc-cover-note-front {
+  background: #1c202a;
+}
+
+.doc-cover-note-top {
+  display: flex;
+  align-items: center;
+  padding-top: 3px;
+  border-top: 2.5px solid var(--accent);
+}
+
+.doc-cover-note-title {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.doc-cover-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.doc-line {
+  height: 1.5px;
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 1px;
+  width: 100%;
+}
+
+.doc-line.short {
+  width: 60%;
+}
+
+:root[data-theme='dark'] .doc-line {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Card bottom info */
+.home-page-card .home-card-info {
+  padding: 8px 10px 10px;
+  text-align: center;
+}
+
+.home-page-card .home-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.home-page-card .home-card-meta {
+  font-size: 11px;
+}
+
+.home-page-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
 .home-page-sheet-preview {
@@ -2629,5 +3072,24 @@ mark {
   .home-nav-item {
     width: auto;
     white-space: nowrap;
+  }
+}
+
+@media (max-height: 600px) {
+  .tool-palette,
+  .tool-palette.glass {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    align-content: start;
+    justify-items: center;
+    gap: 1px;
+    padding: 3px;
+  }
+  .tool-palette .tool-sep {
+    display: none;
+  }
+  .tool-palette .tool-btn {
+    width: 26px;
+    height: 26px;
   }
 }

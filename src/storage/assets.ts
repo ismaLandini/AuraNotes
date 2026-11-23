@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { ID } from '../types';
-import { deleteAssets, getAsset, getAssetByHash, listAssetIds, loadAllPages, putAsset } from './db';
+import type { ID, Workspace } from '../types';
+import { deleteAssets, getAsset, getAssetByHash, getDB, listAssetIds, loadAllPages, putAsset } from './db';
 import { referencedAssets } from '../model/pageOps';
 import { newId } from '../model/workspaceOps';
 
@@ -241,6 +241,24 @@ export async function garbageCollectAssets(
     for (const a of referencedAssets(p)) {
       referenced.add(a);
     }
+  }
+  try {
+    const db = await getDB();
+    const ws = (await db.get('kv', 'workspace')) as Workspace | undefined;
+    if (ws && typeof ws === 'object') {
+      if (ws.pages) {
+        for (const meta of Object.values(ws.pages)) {
+          if (meta?.pdfAssetId) referenced.add(meta.pdfAssetId);
+        }
+      }
+      if (Array.isArray(ws.trash)) {
+        for (const entry of ws.trash) {
+          if (entry?.page?.pdfAssetId) referenced.add(entry.page.pdfAssetId);
+        }
+      }
+    }
+  } catch {
+    /* ignore */
   }
   const stored = await listAssetIds();
   const orphan = stored.filter((a) => !referenced.has(a));

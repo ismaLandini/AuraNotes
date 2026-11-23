@@ -56,6 +56,43 @@ describe('connectors', () => {
     expect(ep.from).toEqual({ x: 100, y: -4 });
     expect(ep.to).toEqual({ x: 804, y: 248 });
   });
+
+  it('computes true elliptical perimeter anchors for circle and ellipse shapes', () => {
+    const ellipse: CanvasItem = {
+      id: 'e1',
+      type: 'shape',
+      kind: 'ellipse',
+      x1: 100,
+      y1: 100,
+      x2: 300,
+      y2: 200,
+      color: '#000',
+      width: 2,
+      opacity: 1,
+      fill: null,
+    };
+    const items = { e1: ellipse };
+
+    // Point directly to the right: angle 0, perimeter at (300, 150) -> normalized anchor (1, 0.5)
+    const rightAnchor = G.closestPerimeterAnchor(ellipse, items, { x: 350, y: 150 });
+    expect(rightAnchor.x).toBeCloseTo(1, 2);
+    expect(rightAnchor.y).toBeCloseTo(0.5, 2);
+
+    const rightPt = G.fixedAnchorPoint(ellipse, items, rightAnchor);
+    // Bounds of shape include stroke padding (width=2 -> pad=2: x in [98, 302], y in [98, 202])
+    expect(rightPt.x).toBeCloseTo(302, 1);
+    expect(rightPt.y).toBeCloseTo(150, 1);
+
+    // Point diagonally towards (300, 200): vector from center (200, 150) is (100, 50).
+    // The anchor must be on the true ellipse curve (not the bounding box corner 302, 202).
+    const diagAnchor = G.closestPerimeterAnchor(ellipse, items, { x: 300, y: 200 });
+    const diagPt = G.fixedAnchorPoint(ellipse, items, diagAnchor);
+    expect(diagPt.x).toBeLessThan(300);
+    expect(diagPt.y).toBeLessThan(200);
+    // On the ellipse (x - 200)^2 / 102^2 + (y - 150)^2 / 52^2 == 1:
+    const ellipseEq = Math.pow((diagPt.x - 200) / 102, 2) + Math.pow((diagPt.y - 150) / 52, 2);
+    expect(ellipseEq).toBeCloseTo(1, 4);
+  });
 });
 
 describe('image local frame', () => {
@@ -92,6 +129,19 @@ describe('drawing helpers', () => {
     const p = G.constrainSquare(0, 0, 40, -100);
     expect(Math.abs(p.x)).toBe(100);
     expect(p.y).toBe(-100);
+  });
+  it('constrains strokes orthogonally (horizontal or vertical)', () => {
+    const h = G.constrainOrthogonal(100, 200, 350, 230);
+    expect(h).toEqual({ x: 350, y: 200 });
+
+    const v = G.constrainOrthogonal(100, 200, 120, 500);
+    expect(v).toEqual({ x: 100, y: 500 });
+
+    const left = G.constrainOrthogonal(100, 200, -50, 190);
+    expect(left).toEqual({ x: -50, y: 200 });
+
+    const up = G.constrainOrthogonal(100, 200, 95, -100);
+    expect(up).toEqual({ x: 100, y: -100 });
   });
   it('simplifies collinear points', () => {
     const pts = [0, 0, 1, 0.001, 2, 0, 3, 0.001, 4, 0];

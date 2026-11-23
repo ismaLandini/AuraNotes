@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
+  ArrowUpDown,
   BookOpen,
   ChevronRight,
   Clock,
   FileDown,
   FileText,
+  FileUp,
   FolderPlus,
   Hash,
   Home,
@@ -25,7 +27,9 @@ import { useStore } from '../store/useStore';
 import { askText, confirmDanger, toast, useUI, type HomeTab } from '../store/ui';
 import { registerShortcuts } from '../shortcuts/registry';
 import * as W from '../model/workspaceOps';
-import type { ID, Notebook, PageMeta, Section } from '../types';
+import type { ID, Notebook, PageMeta, PageSortOrder, PdfSourceAttr, Section } from '../types';
+import { usePdfPageUrl } from '../pdf/pageCache';
+import { importPdfAsDocument } from '../pdf/importPdfDocument';
 
 function relTime(ts: number): string {
   const d = Date.now() - ts;
@@ -184,24 +188,110 @@ function BookGraphic({ color, title, pageCount }: { color: string; title: string
   );
 }
 
+/** Goodnotes-style stacked sheets preview cover for a Page / Document. */
+function PageCoverGraphic({ page, accentColor }: { page: PageMeta; accentColor?: string }) {
+  const isPdf = Boolean(page.pdfAssetId || page.firstSheetType === 'pdf');
+  const sheetCount = page.sheetCount ?? 1;
+  const isMulti = sheetCount > 1;
+  const pdfSource: PdfSourceAttr | null = useMemo(
+    () => (isPdf && page.pdfAssetId ? { type: 'pdf', assetId: page.pdfAssetId, page: 1, mode: 'live' } : null),
+    [isPdf, page.pdfAssetId],
+  );
+  const { url, loading } = usePdfPageUrl(pdfSource, 280, true);
+
+  return (
+    <div className={`home-cover-stage${isPdf ? ' is-pdf' : ''}`} aria-hidden="true">
+      <div className={`home-doc-stack${isMulti ? ' is-multi' : ''}`}>
+        {/* Under-sheets giving the stacked 'set of pages' look */}
+        <div className="doc-sheet-under sheet-layer-2" />
+        <div className="doc-sheet-under sheet-layer-1" />
+
+        {/* Front cover sheet displaying the initial page */}
+        <div className={`doc-sheet-front${isPdf ? ' is-pdf' : ''}`}>
+          {isPdf ? (
+            url ? (
+              <img src={url} alt="" className="doc-cover-pdf-img" draggable={false} />
+            ) : (
+              <div className="doc-cover-pdf-placeholder">
+                <FileText size={22} className="doc-cover-pdf-icon" />
+                <span className="doc-cover-pdf-status">{loading ? 'Anteprima…' : 'PDF'}</span>
+              </div>
+            )
+          ) : (
+            <div className="doc-cover-note-front">
+              <div className="doc-cover-note-top" style={accentColor ? { borderTopColor: accentColor } : undefined}>
+                <span className="doc-cover-note-title">{page.title || 'Senza titolo'}</span>
+              </div>
+              <div className="doc-cover-lines">
+                <span className="doc-line" />
+                <span className="doc-line" />
+                <span className="doc-line" />
+                <span className="doc-line" />
+                <span className="doc-line short" />
+              </div>
+            </div>
+          )}
+
+          {isPdf && <div className="doc-cover-badge pdf">PDF</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const HOLD_DELAY_MS = 160;
+
+interface PageDragState {
+  pageId: ID;
+  fromIndex: number;
+  x: number;
+  y: number;
+  overPageId: ID | null;
+  side: 'before' | 'after';
+  toIndex: number;
+}
+
 export function HomeView() {
   const ws = useStore((s) => s.workspace);
   const currentPageId = useStore((s) => s.pageId);
   const homeTab = useUI((s) => s.homeTab);
   const homeNotebookId = useUI((s) => s.homeNotebookId);
+  const homeSectionId = useUI((s) => s.homeSectionId);
   const setUI = useUI((s) => s.set);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importingPdf, setImportingPdf] = useState(false);
 
   const [query, setQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ kind: 'notebook' | 'section' | 'page'; id: ID; x: number; y: number } | null>(null);
 
+  const sectionPagesGridRef = useRef<HTMLDivElement>(null);
+  const [pageDrag, setPageDrag] = useState<PageDragState | null>(null);
+  const suppressClickRef = useRef(false);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
   // If the currently inspected notebook was deleted, fall back to root notebooks grid
   const activeNotebook: Notebook | null = homeNotebookId ? (ws.notebooks[homeNotebookId] ?? null) : null;
+  const activeSection: Section | null = homeSectionId ? (ws.sections[homeSectionId] ?? null) : null;
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, [activeSection?.id]);
+
   useEffect(() => {
     if (homeNotebookId && !ws.notebooks[homeNotebookId]) {
-      setUI({ homeNotebookId: null });
+      setUI({ homeNotebookId: null, homeSectionId: null });
     }
   }, [homeNotebookId, ws.notebooks, setUI]);
+
+  useEffect(() => {
+    if (homeSectionId && !ws.sections[homeSectionId]) {
+      setUI({ homeSectionId: null });
+    }
+  }, [homeSectionId, ws.sections, setUI]);
 
   const allTags = useMemo(() => W.allWorkspaceTags(ws), [ws]);
   const activeTag = selectedTag && allTags.includes(selectedTag) ? selectedTag : null;
@@ -312,11 +402,16 @@ export function HomeView() {
   };
 
   const openNotebookFolder = (id: ID) => {
-    setUI({ homeTab: 'notebooks', homeNotebookId: id });
+    setUI({ homeTab: 'notebooks', homeNotebookId: id, homeSectionId: null });
   };
 
   const openSectionBook = (id: ID) => {
-    useStore.getState().selectSection(id);
+    const sec = ws.sections[id];
+    setUI({
+      homeTab: 'notebooks',
+      homeNotebookId: sec ? sec.notebookId : homeNotebookId,
+      homeSectionId: id,
+    });
   };
 
   const openPageCard = (id: ID) => {
@@ -324,7 +419,36 @@ export function HomeView() {
   };
 
   const switchTab = (tab: HomeTab) => {
-    setUI({ homeTab: tab, ...(tab === 'notebooks' ? { homeNotebookId: null } : {}) });
+    setUI({ homeTab: tab, ...(tab === 'notebooks' ? { homeNotebookId: null, homeSectionId: null } : { homeSectionId: null }) });
+  };
+
+  const handleAddPageInSection = (sectionId: ID) => {
+    const pid = useStore.getState().addPage(sectionId, 'Pagina senza titolo');
+    if (pid) {
+      toast('Nuova pagina creata', 'success');
+    }
+  };
+
+  const handleImportPdfClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handlePdfFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeSection) return;
+    try {
+      setImportingPdf(true);
+      toast('Importazione del PDF in corso...', 'info', 2500);
+      const res = await importPdfAsDocument(file, file.name, activeSection.id);
+      toast(`"${res.title}" importato con successo (${res.sheetCount} pagine)`, 'success');
+      await useStore.getState().openPage(res.pageId);
+    } catch (err) {
+      console.error(err);
+      toast('Impossibile importare il PDF. Verifica che il file sia valido.', 'error');
+    } finally {
+      setImportingPdf(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   // Filtered items when searching or filtering by tag in Home
@@ -509,19 +633,209 @@ export function HomeView() {
     );
   };
 
-  const renderPageCard = (p: PageMeta) => {
+  const computeDropTarget = (
+    clientX: number,
+    clientY: number,
+    fromIndex: number,
+  ): { overPageId: ID | null; side: 'before' | 'after'; toIndex: number } => {
+    const grid = sectionPagesGridRef.current;
+    if (!grid) return { overPageId: null, side: 'before', toIndex: fromIndex };
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.home-page-card[data-page-id]'));
+    let targetCard: HTMLElement | null = null;
+    let targetRect: DOMRect | null = null;
+    let bestScore = Infinity;
+
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        targetCard = card;
+        targetRect = rect;
+        break;
+      }
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dyBand = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+      const score = dyBand * 3 + Math.hypot(clientX - cx, clientY - cy);
+      if (score < bestScore) {
+        bestScore = score;
+        targetCard = card;
+        targetRect = rect;
+      }
+    }
+
+    if (!targetCard || !targetRect) {
+      return { overPageId: null, side: 'before', toIndex: fromIndex };
+    }
+
+    const overId = targetCard.dataset.pageId ?? null;
+    const idx = Number(targetCard.dataset.pageIndex ?? -1);
+    if (!overId || Number.isNaN(idx) || idx < 0 || idx === fromIndex) {
+      return { overPageId: null, side: 'before', toIndex: fromIndex };
+    }
+
+    let side: 'before' | 'after' = clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after';
+    if (idx === fromIndex + 1 && clientX >= targetRect.left + targetRect.width * 0.15) {
+      side = 'after';
+    } else if (idx === fromIndex - 1 && clientX <= targetRect.right - targetRect.width * 0.15) {
+      side = 'before';
+    }
+
+    const slot = side === 'before' ? idx : idx + 1;
+    const toIndex = slot > fromIndex ? slot - 1 : slot;
+    return { overPageId: overId, side, toIndex };
+  };
+
+  const startPagePressOrDrag = (e: React.PointerEvent<HTMLElement>, pageId: ID, fromIndex: number) => {
+    if (!activeSection || e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('.home-card-actions')) return;
+
+    dragCleanupRef.current?.();
+    suppressClickRef.current = false;
+
+    const sectionId = activeSection.id;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let lastX = e.clientX;
+    let lastY = e.clientY;
+    let activeDrag: PageDragState | null = null;
+    let cancelled = false;
+
+    const beginDrag = (x: number, y: number) => {
+      if (activeDrag || cancelled) return;
+      suppressClickRef.current = true;
+      const target = computeDropTarget(x, y, fromIndex);
+      activeDrag = { pageId, fromIndex, x, y, ...target };
+      setPageDrag(activeDrag);
+    };
+
+    const holdTimer = window.setTimeout(() => {
+      beginDrag(lastX, lastY);
+    }, HOLD_DELAY_MS);
+
+    const onPointerMove = (ev: PointerEvent) => {
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      if (!activeDrag) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) >= 6) {
+          window.clearTimeout(holdTimer);
+          beginDrag(ev.clientX, ev.clientY);
+        }
+        return;
+      }
+      const target = computeDropTarget(ev.clientX, ev.clientY, fromIndex);
+      activeDrag = { pageId, fromIndex, x: ev.clientX, y: ev.clientY, ...target };
+      setPageDrag(activeDrag);
+    };
+
+    const removeListeners = () => {
+      window.clearTimeout(holdTimer);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('keydown', onKeyDown, true);
+      dragCleanupRef.current = null;
+    };
+
+    const onPointerUp = () => {
+      removeListeners();
+      const finalDrag = activeDrag;
+      activeDrag = null;
+      setPageDrag(null);
+      if (finalDrag) {
+        if (!cancelled && finalDrag.toIndex !== finalDrag.fromIndex) {
+          useStore.getState().mutateWorkspace((w) => W.movePage(w, finalDrag.pageId, sectionId, finalDrag.toIndex));
+        }
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      } else if (cancelled) {
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      }
+    };
+
+    const onPointerCancel = () => {
+      cancelled = true;
+      removeListeners();
+      activeDrag = null;
+      setPageDrag(null);
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+    };
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cancelled = true;
+        window.clearTimeout(holdTimer);
+        activeDrag = null;
+        setPageDrag(null);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('keydown', onKeyDown, true);
+      }
+    };
+
+    dragCleanupRef.current = () => {
+      removeListeners();
+      activeDrag = null;
+      setPageDrag(null);
+      suppressClickRef.current = false;
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('keydown', onKeyDown, true);
+  };
+
+  const renderPageCard = (p: PageMeta, reorderIndex?: number) => {
     const sec = ws.sections[p.sectionId];
     const nb = sec ? ws.notebooks[sec.notebookId] : null;
-    const snippet = p.searchText ? p.searchText.slice(0, 110).trim() : '';
+    const isPdf = Boolean(p.pdfAssetId || p.firstSheetType === 'pdf');
+    const sheetCount = p.sheetCount ?? 1;
+    const countLabel = isPdf
+      ? sheetCount === 1
+        ? '1 pagina'
+        : `${sheetCount} pagine`
+      : sheetCount === 1
+        ? '1 foglio'
+        : `${sheetCount} fogli`;
+    const canReorder = reorderIndex !== undefined;
+    const isDraggingSource = canReorder && pageDrag?.pageId === p.id;
+    const isDropBefore =
+      canReorder &&
+      pageDrag?.overPageId === p.id &&
+      pageDrag.side === 'before' &&
+      pageDrag.toIndex !== pageDrag.fromIndex;
+    const isDropAfter =
+      canReorder &&
+      pageDrag?.overPageId === p.id &&
+      pageDrag.side === 'after' &&
+      pageDrag.toIndex !== pageDrag.fromIndex;
+
     return (
       <div
         key={p.id}
-        className="home-page-card"
+        className={`home-page-card${canReorder ? ' is-reorderable' : ''}${isDraggingSource ? ' is-dragging-source' : ''}${isDropBefore ? ' drop-before' : ''}${isDropAfter ? ' drop-after' : ''}`}
         data-testid={`home-page-${p.title}`}
+        data-page-id={canReorder ? p.id : undefined}
+        data-page-index={canReorder ? reorderIndex : undefined}
         role="button"
         tabIndex={0}
         aria-label={`Pagina ${p.title || 'Senza titolo'}`}
-        onClick={() => openPageCard(p.id)}
+        onPointerDown={canReorder ? (e) => startPagePressOrDrag(e, p.id, reorderIndex) : undefined}
+        onDragStart={canReorder ? (e) => e.preventDefault() : undefined}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          openPageCard(p.id);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -534,41 +848,42 @@ export function HomeView() {
           setMenu({ kind: 'page', id: p.id, x: e.clientX, y: e.clientY });
         }}
       >
-        <div className="home-page-sheet-preview">
-          <div className="home-page-sheet-header" style={{ borderTopColor: sec?.color ?? '#3b8cff' }}>
-            <FileText size={15} />
-            <span className="home-page-sheet-title">{p.title || 'Senza titolo'}</span>
-          </div>
-          <p className="home-page-sheet-snippet">{snippet || 'Pagina vuota o con annotazioni grafiche'}</p>
-          {p.tags && p.tags.length > 0 && (
-            <div className="home-page-tags">
-              {p.tags.slice(0, 3).map((t) => (
-                <span key={t} className="page-nav-tag">
-                  #{t}
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="home-card-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className={`home-star-btn${p.starred ? ' starred' : ''}`}
+            onClick={() => useStore.getState().mutateWorkspace((w) => W.togglePageStar(w, p.id))}
+            title={p.starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}
+            aria-label={p.starred ? `Rimuovi ${p.title} dai preferiti` : `Aggiungi ${p.title} ai preferiti`}
+          >
+            <Star size={15} fill={p.starred ? 'currentColor' : 'none'} />
+          </button>
+          <button
+            type="button"
+            className="home-more-btn"
+            onClick={(e) => setMenu({ kind: 'page', id: p.id, x: e.clientX, y: e.clientY })}
+            title="Azioni pagina"
+            aria-label={`Azioni pagina ${p.title}`}
+          >
+            <MoreHorizontal size={16} />
+          </button>
         </div>
-        <div className="home-page-card-footer">
-          <div className="home-page-location">
-            {nb && <span className="home-ctx-dot" style={{ background: nb.color }} />}
-            <span>
-              {nb?.name ?? 'Quaderno'} › {sec?.name ?? 'Sezione'}
-            </span>
+
+        <PageCoverGraphic page={p} accentColor={sec?.color} />
+
+        <div className="home-card-info">
+          <div className="home-card-title">{p.title || 'Senza titolo'}</div>
+          <div className="home-card-meta">
+            <span className="home-page-badge-pill">{countLabel}</span>
+            {nb && !activeSection && (
+              <>
+                <span>·</span>
+                <span className="home-ctx-dot" style={{ background: nb.color }} />
+                <span>{nb.name}</span>
+              </>
+            )}
           </div>
-          <div className="home-page-footer-right" onClick={(e) => e.stopPropagation()}>
-            <span className="home-card-date">{relTime(p.updatedAt)}</span>
-            <button
-              type="button"
-              className={`home-star-btn inline${p.starred ? ' starred' : ''}`}
-              onClick={() => useStore.getState().mutateWorkspace((w) => W.togglePageStar(w, p.id))}
-              title={p.starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}
-              aria-label={p.starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'}
-            >
-              <Star size={14} fill={p.starred ? 'currentColor' : 'none'} />
-            </button>
-          </div>
+          <div className="home-card-date">{relTime(p.updatedAt)}</div>
         </div>
       </div>
     );
@@ -679,7 +994,7 @@ export function HomeView() {
                 <button
                   type="button"
                   className="home-back-btn"
-                  onClick={() => setUI({ homeNotebookId: null })}
+                  onClick={() => setUI({ homeNotebookId: null, homeSectionId: null })}
                   data-testid="home-back-to-notebooks"
                   aria-label="Torna a tutti i quaderni"
                 >
@@ -687,10 +1002,30 @@ export function HomeView() {
                   <span>Quaderni</span>
                 </button>
                 <ChevronRight size={15} className="home-crumb-sep" />
-                <span className="home-current-notebook">
-                  <span className="home-ctx-dot lg" style={{ background: activeNotebook.color }} />
-                  {activeNotebook.name}
-                </span>
+                {activeSection ? (
+                  <>
+                    <button
+                      type="button"
+                      className="home-back-btn inline"
+                      onClick={() => setUI({ homeSectionId: null })}
+                      data-testid="home-back-to-sections"
+                      aria-label={`Torna alle sezioni di ${activeNotebook.name}`}
+                    >
+                      <span className="home-ctx-dot" style={{ background: activeNotebook.color }} />
+                      <span>{activeNotebook.name}</span>
+                    </button>
+                    <ChevronRight size={15} className="home-crumb-sep" />
+                    <span className="home-current-notebook">
+                      <span className="home-ctx-dot lg" style={{ background: activeSection.color }} />
+                      {activeSection.name}
+                    </span>
+                  </>
+                ) : (
+                  <span className="home-current-notebook">
+                    <span className="home-ctx-dot lg" style={{ background: activeNotebook.color }} />
+                    {activeNotebook.name}
+                  </span>
+                )}
               </div>
             ) : (
               <h1 className="home-title">
@@ -703,6 +1038,14 @@ export function HomeView() {
           </div>
 
           <div className="home-header-right">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="application/pdf,.pdf"
+              style={{ display: 'none' }}
+              onChange={handlePdfFileSelected}
+              data-testid="home-pdf-file-input"
+            />
             <div className="home-search-box">
               <Search size={15} />
               <input
@@ -736,7 +1079,7 @@ export function HomeView() {
               </button>
             )}
 
-            {homeTab === 'notebooks' && activeNotebook && (
+            {homeTab === 'notebooks' && activeNotebook && !activeSection && (
               <button
                 type="button"
                 className="btn primary"
@@ -746,6 +1089,50 @@ export function HomeView() {
                 <Plus size={15} />
                 <span>Nuova sezione</span>
               </button>
+            )}
+
+            {homeTab === 'notebooks' && activeNotebook && activeSection && (
+              <>
+                <div className="home-sort-box">
+                  <ArrowUpDown size={14} className="home-sort-icon" aria-hidden="true" />
+                  <select
+                    className="home-sort-select"
+                    value={activeSection.pageSort ?? 'manual'}
+                    onChange={(e) =>
+                      useStore.getState().mutateWorkspace((w) => W.sortSectionPages(w, activeSection.id, e.target.value as PageSortOrder))
+                    }
+                    aria-label="Ordina pagine"
+                    data-testid="section-page-sort"
+                  >
+                    {W.PAGE_SORT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleImportPdfClick}
+                  disabled={importingPdf}
+                  data-testid="home-header-import-pdf"
+                  title="Importa un PDF per intero in questa sezione"
+                >
+                  <FileUp size={15} />
+                  <span>{importingPdf ? 'Importazione…' : 'Importa PDF'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => void handleAddPageInSection(activeSection.id)}
+                  data-testid="home-header-add-page"
+                  title="Crea una nuova pagina in questa sezione"
+                >
+                  <Plus size={15} />
+                  <span>Nuova pagina</span>
+                </button>
+              </>
             )}
 
             {homeTab === 'trash' && ws.trash.length > 0 && (
@@ -799,7 +1186,7 @@ export function HomeView() {
               {filteredResults.pages.length > 0 && (
                 <section className="home-group">
                   <h2 className="home-group-title">Pagine ({filteredResults.pages.length})</h2>
-                  <div className="home-grid pages">{filteredResults.pages.map(renderPageCard)}</div>
+                  <div className="home-grid pages">{filteredResults.pages.map((p) => renderPageCard(p))}</div>
                 </section>
               )}
               {filteredResults.notebooks.length === 0 && filteredResults.sections.length === 0 && filteredResults.pages.length === 0 && (
@@ -830,7 +1217,7 @@ export function HomeView() {
                 <span className="home-new-card-label">Nuovo quaderno</span>
               </button>
             </div>
-          ) : homeTab === 'notebooks' && activeNotebook ? (
+          ) : homeTab === 'notebooks' && activeNotebook && !activeSection ? (
             /* Level 2: Inside a Notebook -> Sections as Colored Books */
             <div className="home-grid books" data-testid="home-sections-grid">
               {activeNotebook.sectionIds.map((sid) => {
@@ -850,6 +1237,41 @@ export function HomeView() {
                 <span className="home-new-card-label">Nuova sezione</span>
               </button>
             </div>
+          ) : homeTab === 'notebooks' && activeNotebook && activeSection ? (
+            /* Level 3: Inside a Section -> Pages as Goodnotes Document Cards */
+            <div ref={sectionPagesGridRef} className="home-grid pages" data-testid="home-section-pages-grid">
+              <button
+                type="button"
+                className="home-new-card page"
+                onClick={() => void handleAddPageInSection(activeSection.id)}
+                data-testid="home-new-page-card"
+                aria-label="Crea nuova pagina"
+              >
+                <div className="home-new-card-icon">
+                  <Plus size={28} />
+                </div>
+                <span className="home-new-card-label">Nuova pagina</span>
+              </button>
+
+              <button
+                type="button"
+                className="home-new-card pdf"
+                onClick={handleImportPdfClick}
+                disabled={importingPdf}
+                data-testid="home-import-pdf-card"
+                aria-label="Importa PDF per intero"
+              >
+                <div className="home-new-card-icon pdf-icon">
+                  <FileUp size={28} />
+                </div>
+                <span className="home-new-card-label">{importingPdf ? 'Importazione…' : 'Importa PDF'}</span>
+              </button>
+
+              {activeSection.pageIds.map((pid, idx) => {
+                const p = ws.pages[pid];
+                return p ? renderPageCard(p, idx) : null;
+              })}
+            </div>
           ) : homeTab === 'recent' ? (
             /* Recent Tab */
             <div className="home-sections-stack" data-testid="home-recent-view">
@@ -862,7 +1284,7 @@ export function HomeView() {
               {recentData.pages.length > 0 && (
                 <section className="home-group">
                   <h2 className="home-group-title">Pagine modificate di recente</h2>
-                  <div className="home-grid pages">{recentData.pages.map(renderPageCard)}</div>
+                  <div className="home-grid pages">{recentData.pages.map((p) => renderPageCard(p))}</div>
                 </section>
               )}
               {recentData.sections.length === 0 && recentData.pages.length === 0 && (
@@ -891,7 +1313,7 @@ export function HomeView() {
               {favoritesData.pages.length > 0 && (
                 <section className="home-group">
                   <h2 className="home-group-title">Pagine preferite</h2>
-                  <div className="home-grid pages">{favoritesData.pages.map(renderPageCard)}</div>
+                  <div className="home-grid pages">{favoritesData.pages.map((p) => renderPageCard(p))}</div>
                 </section>
               )}
               {favoritesData.notebooks.length === 0 && favoritesData.sections.length === 0 && favoritesData.pages.length === 0 && (
@@ -1036,6 +1458,21 @@ export function HomeView() {
           ]}
         />
       )}
+
+      {pageDrag &&
+        ws.pages[pageDrag.pageId] &&
+        createPortal(
+          <div
+            className="home-page-drag-ghost"
+            style={{ left: pageDrag.x, top: pageDrag.y }}
+            aria-hidden="true"
+            data-testid="home-page-drag-ghost"
+          >
+            <PageCoverGraphic page={ws.pages[pageDrag.pageId]} accentColor={activeSection?.color} />
+            <div className="home-drag-ghost-title">{ws.pages[pageDrag.pageId].title || 'Senza titolo'}</div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

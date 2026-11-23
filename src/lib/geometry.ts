@@ -247,6 +247,17 @@ export function closestPerimeterAnchor(item: CanvasItem, items: Record<string, C
     ly = p.y - r.y;
   }
   if (w <= 0 || h <= 0) return { x: 0.5, y: 0 };
+
+  if (item.type === 'shape' && item.kind === 'ellipse') {
+    const cx = w / 2;
+    const cy = h / 2;
+    const angle = Math.atan2(ly - cy, lx - cx);
+    return {
+      x: Math.max(0, Math.min(1, 0.5 + 0.5 * Math.cos(angle))),
+      y: Math.max(0, Math.min(1, 0.5 + 0.5 * Math.sin(angle))),
+    };
+  }
+
   const cx = Math.max(0, Math.min(w, lx));
   const cy = Math.max(0, Math.min(h, ly));
   const dists = [
@@ -282,6 +293,20 @@ export function perimeterAnchorAt(item: CanvasItem, items: Record<string, Canvas
     ly = p.y - r.y;
   }
   if (w <= 0 || h <= 0) return null;
+
+  if (item.type === 'shape' && item.kind === 'ellipse') {
+    const cx = w / 2;
+    const cy = h / 2;
+    const angle = Math.atan2(ly - cy, lx - cx);
+    const ex = cx + (w / 2) * Math.cos(angle);
+    const ey = cy + (h / 2) * Math.sin(angle);
+    if (Math.hypot(lx - ex, ly - ey) > tol) return null;
+    return {
+      x: Math.max(0, Math.min(1, 0.5 + 0.5 * Math.cos(angle))),
+      y: Math.max(0, Math.min(1, 0.5 + 0.5 * Math.sin(angle))),
+    };
+  }
+
   if (lx < -tol || ly < -tol || lx > w + tol || ly > h + tol) return null;
   const cx = Math.max(0, Math.min(w, lx));
   const cy = Math.max(0, Math.min(h, ly));
@@ -390,6 +415,19 @@ export function constrainSquare(x0: number, y0: number, x: number, y: number): P
   const dy = y - y0;
   const s = Math.max(Math.abs(dx), Math.abs(dy));
   return { x: x0 + Math.sign(dx || 1) * s, y: y0 + Math.sign(dy || 1) * s };
+}
+
+/**
+ * Constrains a stroke to purely horizontal or vertical axis from an origin
+ * (whichever displacement is dominant), keeping drawn lines perfectly straight.
+ */
+export function constrainOrthogonal(x0: number, y0: number, x: number, y: number): Point {
+  const dx = Math.abs(x - x0);
+  const dy = Math.abs(y - y0);
+  if (dx >= dy) {
+    return { x, y: y0 };
+  }
+  return { x: x0, y };
 }
 
 /** Builds a smooth SVG path through points using quadratic midpoints. */

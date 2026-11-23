@@ -90,7 +90,7 @@ export function matches(e: KeyboardEvent, combo: string, mac = isMac): boolean {
   const k = eventKey(e);
   const candidates = KEY_ALIASES[c.key] ?? [c.key];
   if (!candidates.includes(k)) return false;
-  const isLetterOrNamed = /^[a-z0-9]$/.test(c.key) || ['up', 'down', 'left', 'right', 'del', 'esc', 'space', 'enter', 'tab', 'delete', 'backspace', 'escape'].includes(c.key) || c.key.startsWith('arrow') || /^f\d+$/.test(c.key);
+  const isLetterOrNamed = /^[a-z0-9]$/.test(c.key) || ['up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown', 'del', 'esc', 'space', 'enter', 'tab', 'delete', 'backspace', 'escape'].includes(c.key) || c.key.startsWith('arrow') || /^f\d+$/.test(c.key);
   // Symbols often need Shift on non-US layouts (e.g. "/" is ⇧7 on Italian keyboards): ignore Shift unless required.
   if (isLetterOrNamed || c.shift) {
     if (c.shift !== e.shiftKey) return false;
@@ -119,6 +119,10 @@ const KEY_LABELS: Record<string, string> = {
   down: '↓',
   left: '←',
   right: '→',
+  home: isMac ? 'fn←' : 'Home',
+  end: isMac ? 'fn→' : 'End',
+  pageup: isMac ? 'fn↑' : 'PgUp',
+  pagedown: isMac ? 'fn↓' : 'PgDn',
 };
 
 export function formatCombo(combo: string): string {
@@ -133,12 +137,13 @@ export function formatCombo(combo: string): string {
 }
 
 export function isEditableTarget(t: EventTarget | null): boolean {
-  if (!(t instanceof HTMLElement)) return false;
-  if (t.isContentEditable) return true;
-  const tag = t.tagName;
+  const el = t instanceof HTMLElement ? t : t instanceof Node ? t.parentElement : null;
+  if (!el) return false;
+  if (el.isContentEditable || el.closest('[contenteditable="true"]')) return true;
+  const tag = el.tagName;
   if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (tag === 'INPUT') {
-    const type = (t as HTMLInputElement).type;
+    const type = (el as HTMLInputElement).type;
     return !['checkbox', 'radio', 'button', 'range', 'color', 'submit'].includes(type);
   }
   return false;

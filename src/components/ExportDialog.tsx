@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FileDown, Printer } from 'lucide-react';
 import { desktop } from '../desktop';
 import { Modal } from './Dialogs';
@@ -6,7 +6,8 @@ import { useUI, toast } from '../store/ui';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { DEFAULT_PRINT_OPTIONS, PAPERS, type PaperSize, type PrintOptions, type ScaleMode } from '../export/pagination';
-import { Sheets, clearPrint, countSheets, preparePrint, runPrint, type PrintJob, type PrintPage } from '../export/PrintRoot';
+import { Sheets, clearPrint, countSheets, preloadPrintPdfPages, preparePrint, runPrint, type PrintJob, type PrintPage } from '../export/PrintRoot';
+import { computeSheetLayouts, isPdfDocument } from '../lib/page';
 import type { ID } from '../types';
 
 type Scope = 'page' | 'selected' | 'section' | 'notebook';
@@ -63,6 +64,7 @@ function ExportDialogInner() {
   const [loadedFor, setLoadedFor] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const currentKey = ids.join(',');
+  const initializedPdfRef = useRef<string>('');
 
   useEffect(() => {
     let alive = true;
@@ -77,6 +79,42 @@ function ExportDialogInner() {
   }, [ids, currentKey]);
 
   const activePages = loadedFor === currentKey ? pages : null;
+
+  // Auto-detect PDF documents and apply tailored default export options
+  useEffect(() => {
+    if (!activePages || activePages.length === 0) return;
+    const firstContent = activePages[0]?.content;
+    if (isPdfDocument(firstContent) && initializedPdfRef.current !== currentKey) {
+      initializedPdfRef.current = currentKey;
+      const sheets = computeSheetLayouts(firstContent);
+      const firstSheet = sheets[0];
+      const isLandscape = firstSheet ? firstSheet.w > firstSheet.h : false;
+
+      setOpts((prev) => ({
+        ...prev,
+        paper: 'original',
+        orientation: isLandscape ? 'landscape' : 'portrait',
+        marginMm: 0,
+        showTitle: false,
+        pageNumbers: false,
+        includeBackground: true,
+        scaleMode: 'actual',
+      }));
+    }
+  }, [activePages, currentKey]);
+
+  // Preload PDF page assets for instant preview rendering
+  useEffect(() => {
+    if (!activePages || activePages.length === 0) return;
+    const tempJob: PrintJob = {
+      pages: activePages,
+      options: opts,
+      docTitle: 'Preview',
+      paperClass: `paper-${settings.paper}`,
+      patternClass: `pattern-${settings.background}`,
+    };
+    void preloadPrintPdfPages(tempJob);
+  }, [activePages, opts, settings.paper, settings.background]);
 
   const set = (patch: Partial<PrintOptions>) => {
     const next = { ...opts, ...patch };
@@ -105,6 +143,22 @@ function ExportDialogInner() {
       }
     : null;
   const sheetCount = job ? countSheets(job) : 0;
+
+  const scalerRef = useRef<HTMLDivElement>(null);
+  const [scaledH, setScaledH] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const el = scalerRef.current;
+    if (!el) return;
+    const update = () => {
+      const h = el.scrollHeight;
+      if (h > 0) setScaledH(Math.ceil(h * 0.42));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [job, sheetCount]);
 
   const desktopBridge = desktop();
   const doSavePdf = async () => {
@@ -244,9 +298,11 @@ function ExportDialogInner() {
         </div>
         <div className="export-preview" aria-label="Anteprima">
           {job ? (
-            <div className="preview-scaler">
-              <Sheets job={job} limit={6} />
-              {sheetCount > 6 && <p className="hint">… e altri {sheetCount - 6} fogli</p>}
+            <div className="preview-scaler-wrap" style={scaledH ? { height: scaledH } : undefined}>
+              <div className="preview-scaler" ref={scalerRef}>
+                <Sheets job={job} limit={6} />
+                {sheetCount > 6 && <p className="hint">… e altri {sheetCount - 6} fogli</p>}
+              </div>
             </div>
           ) : (
             <p className="hint">Caricamento anteprima…</p>

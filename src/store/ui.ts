@@ -18,6 +18,8 @@ export interface PromptRequest {
   multiline?: boolean;
   /** Renders a KaTeX preview below the input. */
   mathPreview?: boolean;
+  /** Keeps an active canvas text editor alive while this prompt is open. */
+  keepEditing?: boolean;
   confirmLabel?: string;
   resolve: (value: string | null) => void;
 }
@@ -30,6 +32,12 @@ export interface Toast {
 
 export type HomeTab = 'notebooks' | 'recent' | 'favorites' | 'trash';
 
+export type NavHistoryEntry =
+  | { kind: 'home'; homeTab: HomeTab; homeNotebookId: string | null; homeSectionId: string | null }
+  | { kind: 'page'; pageId: string };
+
+const MAX_NAV_HISTORY = 50;
+
 interface UIState {
   confirm: ConfirmRequest | null;
   prompt: PromptRequest | null;
@@ -37,6 +45,8 @@ interface UIState {
   homeOpen: boolean;
   homeTab: HomeTab;
   homeNotebookId: string | null;
+  homeSectionId: string | null;
+  navHistory: NavHistoryEntry[];
   searchOpen: boolean;
   settingsOpen: boolean;
   shortcutsOpen: boolean;
@@ -59,6 +69,8 @@ export const useUI = create<UIState>((set) => ({
   homeOpen: true,
   homeTab: 'notebooks',
   homeNotebookId: null,
+  homeSectionId: null,
+  navHistory: [],
   searchOpen: false,
   settingsOpen: false,
   shortcutsOpen: false,
@@ -73,6 +85,26 @@ export const useUI = create<UIState>((set) => ({
   mobileNavOpen: false,
   set: (patch) => set(patch),
 }));
+
+export function pushNavHistory(entry: NavHistoryEntry): void {
+  useUI.setState((s) => {
+    const last = s.navHistory[s.navHistory.length - 1];
+    if (
+      last &&
+      last.kind === entry.kind &&
+      (entry.kind === 'page'
+        ? last.kind === 'page' && last.pageId === entry.pageId
+        : last.kind === 'home' &&
+          last.homeTab === entry.homeTab &&
+          last.homeNotebookId === entry.homeNotebookId &&
+          last.homeSectionId === entry.homeSectionId)
+    ) {
+      return s;
+    }
+    const next = [...s.navHistory, entry];
+    return { navHistory: next.length > MAX_NAV_HISTORY ? next.slice(-MAX_NAV_HISTORY) : next };
+  });
+}
 
 let toastSeq = 1;
 

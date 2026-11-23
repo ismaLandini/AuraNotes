@@ -161,10 +161,19 @@ export function pickPdfFile(target?: PdfImportTarget): void {
   input.type = 'file';
   input.accept = 'application/pdf,.pdf';
   input.setAttribute('data-testid', 'pdf-file-input');
+  input.style.position = 'fixed';
+  input.style.top = '-10000px';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  const cleanup = () => {
+    input.remove();
+  };
   input.onchange = () => {
     const f = input.files?.[0];
+    cleanup();
     if (f) openPdfImportDialog(f, target);
   };
+  input.oncancel = cleanup;
   input.click();
 }
 

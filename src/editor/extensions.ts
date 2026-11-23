@@ -1,5 +1,5 @@
 import { Extension, Node, mergeAttributes, type Extensions, type JSONContent } from '@tiptap/core';
-import { Plugin } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -26,6 +26,51 @@ import { ParagraphFormat } from './paragraphFormat';
 
 export const lowlight = createLowlight(common);
 
+/**
+ * Strips outer LaTeX math delimiters (`\(...\)`, `\[...\]`, `$$...$$`, `$...$`)
+ * when the entire string represents a single delimited formula.
+ */
+export function stripMathDelimiters(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return raw;
+
+  const hasBareToken = (s: string, token: string): boolean => {
+    let idx = s.indexOf(token);
+    while (idx !== -1) {
+      let backslashes = 0;
+      for (let i = idx - 1; i >= 0 && s[i] === '\\'; i--) backslashes++;
+      if (backslashes % 2 === 0) return true;
+      idx = s.indexOf(token, idx + token.length);
+    }
+    return false;
+  };
+
+  if (trimmed.startsWith('\\(') && trimmed.endsWith('\\)') && trimmed.length >= 4) {
+    const inner = trimmed.slice(2, -2);
+    if (!hasBareToken(inner, '\\(') && !hasBareToken(inner, '\\)')) return inner.trim();
+  }
+  if (trimmed.startsWith('\\[') && trimmed.endsWith('\\]') && trimmed.length >= 4) {
+    const inner = trimmed.slice(2, -2);
+    if (!hasBareToken(inner, '\\[') && !hasBareToken(inner, '\\]')) return inner.trim();
+  }
+  if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length >= 4) {
+    const inner = trimmed.slice(2, -2);
+    if (!hasBareToken(inner, '$$')) return inner.trim();
+  }
+  if (
+    trimmed.startsWith('$') &&
+    trimmed.endsWith('$') &&
+    !trimmed.startsWith('$$') &&
+    trimmed.length >= 2 &&
+    !hasBareToken(trimmed.slice(1, -1), '$')
+  ) {
+    let backslashes = 0;
+    for (let i = trimmed.length - 2; i >= 0 && trimmed[i] === '\\'; i--) backslashes++;
+    if (backslashes % 2 === 0) return trimmed.slice(1, -1).trim();
+  }
+  return raw;
+}
+
 export function renderLatex(el: HTMLElement, latex: string, displayMode: boolean): void {
   try {
     katex.render(latex || '\\square', el, { displayMode, throwOnError: false, output: 'htmlAndMathml', strict: 'ignore' });
@@ -46,6 +91,7 @@ declare module '@tiptap/core' {
     };
     math: {
       insertMath: (latex: string, display: boolean) => ReturnType;
+      unwrapMath: () => ReturnType;
     };
   }
 }
@@ -190,15 +236,23 @@ function makeMathNode(display: boolean) {
           if (!editor.isEditable) return;
           e.preventDefault();
           e.stopPropagation();
-          void askText({ title: 'Modifica equazione', label: 'LaTeX', initial: current, mathPreview: true, multiline: display, confirmLabel: 'Aggiorna' }).then((v) => {
-            if (v === null || typeof getPos !== 'function') return;
+          void askText({ title: 'Modifica equazione', label: 'LaTeX', initial: current, mathPreview: true, multiline: display, keepEditing: true, confirmLabel: 'Aggiorna' }).then((v) => {
+            if (editor.isDestroyed) return;
+            if (v === null || typeof getPos !== 'function') {
+              editor.commands.focus();
+              return;
+            }
             const pos = getPos();
             if (typeof pos !== 'number') return;
-            if (v.trim() === '') editor.chain().focus().deleteRange({ from: pos, to: pos + 1 }).run();
+            const clean = stripMathDelimiters(v).trim();
+            if (clean === '') editor.chain().focus().deleteRange({ from: pos, to: pos + 1 }).run();
             else editor.chain().focus().command(({ tr }) => {
-              tr.setNodeMarkup(pos, undefined, { latex: v });
+              tr.setNodeMarkup(pos, undefined, { latex: clean });
               return true;
             }).run();
+            requestAnimationFrame(() => {
+              if (!editor.isDestroyed) editor.commands.focus();
+            });
           });
         });
         return {
@@ -227,8 +281,125 @@ export const MathCommands = Extension.create({
     return {
       insertMath:
         (latex, display) =>
-        ({ chain }) =>
-          chain().insertContent({ type: display ? 'mathBlock' : 'mathInline', attrs: { latex } }).run(),
+        ({ chain, dispatch }) => {
+          if (!display) {
+            return chain()
+              .insertContent({ type: 'mathInline', attrs: { latex } })
+              .command(({ tr, dispatch: d }) => {
+                if (tr.selection instanceof NodeSelection) {
+                  tr.setSelection(TextSelection.create(tr.doc, tr.selection.to));
+                }
+                if (d) d(tr);
+                return true;
+              })
+              .run();
+          }
+          const ok = chain().insertContent({ type: 'mathBlock', attrs: { latex } }).run();
+          if (!ok) return false;
+          if (dispatch) {
+            // Ensure a trailing paragraph exists after the block equation so the user can keep typing continuously.
+            chain()
+              .command(({ tr, state: nextState, dispatch: d }) => {
+                const sel = tr.selection;
+                let afterPos = sel.to;
+                if (sel instanceof NodeSelection && sel.node.type.name === 'mathBlock') {
+                  afterPos = sel.to;
+                } else {
+                  // Find the mathBlock at or right before the selection
+                  const $pos = tr.doc.resolve(sel.from);
+                  const before = $pos.nodeBefore;
+                  if (before?.type.name === 'mathBlock') {
+                    afterPos = sel.from;
+                  } else if ($pos.parent.type.name === 'mathBlock') {
+                    afterPos = $pos.after();
+                  }
+                }
+                const $after = tr.doc.resolve(Math.min(afterPos, tr.doc.content.size));
+                const nextNode = $after.nodeAfter;
+                if (!nextNode || !nextNode.isTextblock) {
+                  const para = nextState.schema.nodes.paragraph.create();
+                  tr.insert(afterPos, para);
+                  tr.setSelection(TextSelection.create(tr.doc, afterPos + 1));
+                } else {
+                  tr.setSelection(TextSelection.create(tr.doc, afterPos + 1));
+                }
+                if (d) d(tr);
+                return true;
+              })
+              .run();
+          }
+          return true;
+        },
+      unwrapMath:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const { selection, schema } = state;
+          const targets: Array<{ from: number; to: number; isBlock: boolean; latex: string }> = [];
+
+          if (selection instanceof NodeSelection && (selection.node.type.name === 'mathInline' || selection.node.type.name === 'mathBlock')) {
+            targets.push({
+              from: selection.from,
+              to: selection.to,
+              isBlock: selection.node.type.name === 'mathBlock',
+              latex: String(selection.node.attrs.latex ?? ''),
+            });
+          } else if (!selection.empty) {
+            state.doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+              if (node.type.name === 'mathInline' || node.type.name === 'mathBlock') {
+                targets.push({
+                  from: pos,
+                  to: pos + node.nodeSize,
+                  isBlock: node.type.name === 'mathBlock',
+                  latex: String(node.attrs.latex ?? ''),
+                });
+                return false;
+              }
+              return true;
+            });
+          } else {
+            const { $from } = selection;
+            if ($from.nodeBefore && ($from.nodeBefore.type.name === 'mathInline' || $from.nodeBefore.type.name === 'mathBlock')) {
+              targets.push({
+                from: selection.from - $from.nodeBefore.nodeSize,
+                to: selection.from,
+                isBlock: $from.nodeBefore.type.name === 'mathBlock',
+                latex: String($from.nodeBefore.attrs.latex ?? ''),
+              });
+            } else if ($from.nodeAfter && ($from.nodeAfter.type.name === 'mathInline' || $from.nodeAfter.type.name === 'mathBlock')) {
+              targets.push({
+                from: selection.from,
+                to: selection.from + $from.nodeAfter.nodeSize,
+                isBlock: $from.nodeAfter.type.name === 'mathBlock',
+                latex: String($from.nodeAfter.attrs.latex ?? ''),
+              });
+            }
+          }
+
+          if (targets.length === 0) return false;
+
+          // Replace in reverse document order so earlier positions remain valid.
+          targets.sort((a, b) => b.from - a.from);
+          let endCaret = targets[0].from;
+          for (const t of targets) {
+            if (t.isBlock) {
+              const para = schema.nodes.paragraph.create(null, t.latex ? schema.text(t.latex) : undefined);
+              tr.replaceWith(t.from, t.to, para);
+              endCaret = t.from + 1 + t.latex.length;
+            } else if (t.latex) {
+              tr.replaceWith(t.from, t.to, schema.text(t.latex));
+              endCaret = t.from + t.latex.length;
+            } else {
+              tr.delete(t.from, t.to);
+              endCaret = t.from;
+            }
+          }
+          if (targets.length === 1) {
+            const safePos = Math.max(0, Math.min(endCaret, tr.doc.content.size));
+            tr.setSelection(TextSelection.near(tr.doc.resolve(safePos)));
+          }
+          if (dispatch) dispatch(tr);
+          return true;
+        },
     };
   },
 });

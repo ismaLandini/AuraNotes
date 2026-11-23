@@ -79,10 +79,19 @@ export function pickBackupFile() {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'application/json,.json';
+  input.style.position = 'fixed';
+  input.style.top = '-10000px';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  const cleanup = () => {
+    input.remove();
+  };
   input.onchange = () => {
     const f = input.files?.[0];
+    cleanup();
     if (f) void importBackupFile(f);
   };
+  input.oncancel = cleanup;
   input.click();
 }
 

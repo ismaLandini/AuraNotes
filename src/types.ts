@@ -14,12 +14,22 @@ export interface Notebook {
   starred?: boolean;
 }
 
+export type PageSortOrder =
+  | 'manual'
+  | 'title-asc'
+  | 'title-desc'
+  | 'created-desc'
+  | 'created-asc'
+  | 'updated-desc'
+  | 'updated-asc';
+
 export interface Section {
   id: ID;
   notebookId: ID;
   name: string;
   color: string;
   pageIds: ID[];
+  pageSort?: PageSortOrder;
   createdAt: number;
   updatedAt: number;
   starred?: boolean;
@@ -36,6 +46,9 @@ export interface PageMeta {
   /** Optional normalised tags (e.g. ['esame', 'importante']). */
   tags?: string[];
   starred?: boolean;
+  sheetCount?: number;
+  firstSheetType?: 'blank' | 'pdf';
+  pdfAssetId?: ID;
 }
 
 export interface TrashEntry {
@@ -201,6 +214,17 @@ export interface PageBackground {
   paper: PaperColor;
 }
 
+export interface SheetDef {
+  id: ID;
+  width: number;
+  height: number;
+  type: 'blank' | 'pdf';
+  /** 1-based page number if type === 'pdf' */
+  pdfPage?: number;
+  /** Binary PDF asset ID in IndexedDB if type === 'pdf' */
+  pdfAssetId?: ID;
+}
+
 export interface PageContent {
   id: ID;
   schemaVersion: number;
@@ -208,6 +232,10 @@ export interface PageContent {
   /** z-order, bottom first */
   order: ID[];
   background?: PageBackground;
+  /** Ordered sheets contained in this document/page. */
+  sheets?: SheetDef[];
+  /** Optional reference to an imported PDF document asset */
+  pdfAssetId?: ID;
 }
 
 export interface Rect {

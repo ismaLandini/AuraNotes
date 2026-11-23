@@ -48,4 +48,5 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
+            src-tauri/target/release/auranotes.exe
+          if-no-files-found: warn

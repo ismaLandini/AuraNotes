@@ -134,6 +134,17 @@ pub fn open_backups_in_finder(dir: &Path) -> Result<(), String> {
             .status()
             .map_err(|e| format!("Impossibile aprire il Finder: {e}"))?;
     }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(dir)
+            .status()
+            .map_err(|e| format!("Impossibile aprire Esplora file: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("xdg-open").arg(dir).status();
+    }
     Ok(())
 }
 

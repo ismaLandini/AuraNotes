@@ -60,7 +60,7 @@ import { CanvasSheet } from './CanvasSheet';
 import { SheetTitle } from './SheetTitle';
 import { ScrollBars } from './ScrollBars';
 
-type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'w' | 'e' | 'p1' | 'p2' | 'grip' | 'c1' | 'c2';
+type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'w' | 'e' | 'p1' | 'p2' | 'grip' | 'c1' | 'c2' | 'bend';
 
 interface ImageBlockHit {
   containerId: ID;
@@ -303,6 +303,7 @@ export function Canvas() {
   const [hoverCursor, setHoverCursor] = useState<string>('default');
   const editBefore = useRef<{ id: ID; before: PageContent } | null>(null);
 
+  const hasPage = Boolean(page && pageId);
   useLayoutEffect(() => {
     registerContainer(containerRef.current);
     const el = containerRef.current;
@@ -311,7 +312,7 @@ export function Canvas() {
     return () => {
       ro?.disconnect();
     };
-  }, [pageId]);
+  }, [pageId, hasPage]);
 
   useEffect(() => {
     return () => {
@@ -817,6 +818,7 @@ export function Canvas() {
       case 'double-arrow':
       case 'rect':
       case 'ellipse': {
+        if (latestSel.length) st.setSelection([]);
         const parent = topImageAt(activeCur, world);
         const imageBlockHit = !parent ? findImageBlockHitAt(containerRef.current, e.clientX, e.clientY, toWorld) : null;
         const startHit = tool === 'arrow' || tool === 'line' || tool === 'double-arrow' ? connectTargetAt(activeCur, world, 12 / v.zoom, null) : null;
@@ -1104,9 +1106,19 @@ export function Canvas() {
       const cy = fixedWorld.y - d.y;
       patch = { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
     } else if (o.type === 'shape') {
-      if (g.handle === 'p1' || g.handle === 'p2') {
-        const other = g.handle === 'p1' ? { x: o.x2, y: o.y2 } : { x: o.x1, y: o.y1 };
-        const p = shift ? constrainAngle(other.x, other.y, world.x, world.y) : world;
+      const curPage = st.currentPage() ?? g.before;
+      const parent = o.parentId ? curPage.items[o.parentId] : undefined;
+      const isImgParent = parent?.type === 'image';
+      const toItemSpace = (pt: Point): Point => (isImgParent ? toImageLocal(parent, pt.x, pt.y) : pt);
+      if (g.handle === 'bend') {
+        const localWorld = toItemSpace(world);
+        const mid = { x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2 };
+        const snapDist = isImgParent ? 6 / Math.max(parent.w, parent.h, 1) : 6;
+        patch = { bend: Math.hypot(localWorld.x - mid.x, localWorld.y - mid.y) < snapDist ? undefined : localWorld };
+      } else if (g.handle === 'p1' || g.handle === 'p2') {
+        const otherLocal = g.handle === 'p1' ? { x: o.x2, y: o.y2 } : { x: o.x1, y: o.y1 };
+        const other = isImgParent ? fromImageLocal(parent, otherLocal.x, otherLocal.y) : otherLocal;
+        const p = toItemSpace(shift ? constrainAngle(other.x, other.y, world.x, world.y) : world);
         patch = g.handle === 'p1' ? { x1: p.x, y1: p.y } : { x2: p.x, y2: p.y };
       } else {
         const minX = Math.min(o.x1, o.x2);
@@ -1291,6 +1303,7 @@ export function Canvas() {
           ...(parent ? { parentId: parent.id } : {}),
         };
         st.updatePage((pg) => P.addItems(pg, [shape]));
+        if (!boxy) st.setSelection([shape.id]);
         break;
       }
       case 'connector': {
@@ -1879,7 +1892,12 @@ export function Canvas() {
 
 function SelectionOverlay({ page, selection, editingId, vp, tool }: { page: PageContent; selection: ID[]; editingId: ID | null; vp: { x: number; y: number; zoom: number }; tool: Tool }) {
   const modalOpen = useUI(isModalOpen);
-  if (modalOpen || (tool !== 'select' && !editingId)) return null;
+  const singleLinearShape =
+    selection.length === 1 &&
+    page.items[selection[0]]?.type === 'shape' &&
+    (page.items[selection[0]] as ShapeItem).kind !== 'rect' &&
+    (page.items[selection[0]] as ShapeItem).kind !== 'ellipse';
+  if (modalOpen || (tool !== 'select' && !editingId && !singleLinearShape)) return null;
   const sel = selection.filter((id) => page.items[id]);
   if (!sel.length) return null;
   const toScreen = (p: Point) => ({ x: (p.x - vp.x) * vp.zoom, y: (p.y - vp.y) * vp.zoom });
@@ -1938,6 +1956,13 @@ function SelectionOverlay({ page, selection, editingId, vp, tool }: { page: Page
           🔒
         </div>,
       );
+    } else if (it.type === 'shape' && it.kind !== 'rect' && it.kind !== 'ellipse') {
+      const parent = it.parentId ? page.items[it.parentId] : undefined;
+      const mapPt = (pt: Point): Point => (parent && parent.type === 'image' ? fromImageLocal(parent, pt.x, pt.y) : pt);
+      nodes.push(handle('p1', toScreen(mapPt({ x: it.x1, y: it.y1 })), 'round'));
+      nodes.push(handle('p2', toScreen(mapPt({ x: it.x2, y: it.y2 })), 'round'));
+      const bm = it.bend ?? { x: (it.x1 + it.x2) / 2, y: (it.y1 + it.y2) / 2 };
+      nodes.push(<div key="bend" data-handle="bend" data-ui-handle className="handle round bend" style={{ left: toScreen(mapPt(bm)).x, top: toScreen(mapPt(bm)).y }} title="Trascina per curvare la freccia" />);
     } else if (!it.parentId) {
       if (it.type === 'container' && isFreeImageContainer(it)) {
         const r = itemBounds(it, page.items);
@@ -1957,19 +1982,14 @@ function SelectionOverlay({ page, selection, editingId, vp, tool }: { page: Page
         nodes.push(handle('sw', toScreen(fromImageLocal(it, 0, 1))));
         nodes.push(handle('se', toScreen(fromImageLocal(it, 1, 1))));
       } else if (it.type === 'shape') {
-        if (it.kind === 'rect' || it.kind === 'ellipse') {
-          const minX = Math.min(it.x1, it.x2);
-          const maxX = Math.max(it.x1, it.x2);
-          const minY = Math.min(it.y1, it.y2);
-          const maxY = Math.max(it.y1, it.y2);
-          nodes.push(handle('nw', toScreen({ x: minX, y: minY })));
-          nodes.push(handle('ne', toScreen({ x: maxX, y: minY })));
-          nodes.push(handle('sw', toScreen({ x: minX, y: maxY })));
-          nodes.push(handle('se', toScreen({ x: maxX, y: maxY })));
-        } else {
-          nodes.push(handle('p1', toScreen({ x: it.x1, y: it.y1 }), 'round'));
-          nodes.push(handle('p2', toScreen({ x: it.x2, y: it.y2 }), 'round'));
-        }
+        const minX = Math.min(it.x1, it.x2);
+        const maxX = Math.max(it.x1, it.x2);
+        const minY = Math.min(it.y1, it.y2);
+        const maxY = Math.max(it.y1, it.y2);
+        nodes.push(handle('nw', toScreen({ x: minX, y: minY })));
+        nodes.push(handle('ne', toScreen({ x: maxX, y: minY })));
+        nodes.push(handle('sw', toScreen({ x: minX, y: maxY })));
+        nodes.push(handle('se', toScreen({ x: maxX, y: maxY })));
       }
     }
   }

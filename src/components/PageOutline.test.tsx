@@ -37,6 +37,7 @@ describe('PageOutline', () => {
     useStore.setState({ pages: { p1: mockPage }, pageId: 'p1' });
 
     render(<PageOutline />);
+    fireEvent.click(screen.getByTestId('outline-tab-titles'));
     expect(screen.getByText('Nessun titolo nella pagina')).toBeInTheDocument();
   });
 
@@ -82,6 +83,7 @@ describe('PageOutline', () => {
     useStore.setState({ pages: { p1: mockPage }, pageId: 'p1', selection: [] });
 
     render(<PageOutline />);
+    fireEvent.click(screen.getByTestId('outline-tab-titles'));
 
     // Count pill shows 3 headings
     expect(document.querySelector('.outline-count-pill')?.textContent).toBe('3');
@@ -97,5 +99,49 @@ describe('PageOutline', () => {
     // Clicking a heading selects its container
     fireEvent.click(h2);
     expect(useStore.getState().selection).toEqual(['c2']);
+  });
+
+  it('defaults to thumbnails of only the current section and switches page on click', () => {
+    const now = Date.now();
+    const blank = (id: string): PageContent => ({
+      id,
+      schemaVersion: 3,
+      items: {},
+      order: [],
+      background: { pattern: 'plain', paper: 'white' },
+    });
+    const prevWs = useStore.getState().workspace;
+    useUI.setState({ outlineOpen: true });
+    useStore.setState({
+      workspace: {
+        ...prevWs,
+        notebooks: {
+          nb1: { id: 'nb1', name: 'Quaderno', color: '#3a6df0', sectionIds: ['sec1', 'sec2'], createdAt: now, updatedAt: now },
+        },
+        sections: {
+          sec1: { id: 'sec1', notebookId: 'nb1', name: 'Sezione 1', color: '#3a6df0', pageIds: ['p1', 'p2'], createdAt: now, updatedAt: now },
+          sec2: { id: 'sec2', notebookId: 'nb1', name: 'Sezione 2', color: '#3a6df0', pageIds: ['p3'], createdAt: now, updatedAt: now },
+        },
+        pages: {
+          p1: { id: 'p1', sectionId: 'sec1', title: 'Pagina Uno', createdAt: now, updatedAt: now, searchText: '' },
+          p2: { id: 'p2', sectionId: 'sec1', title: 'Pagina Due', createdAt: now, updatedAt: now, searchText: '' },
+          p3: { id: 'p3', sectionId: 'sec2', title: 'Altra Sezione', createdAt: now, updatedAt: now, searchText: '' },
+        },
+        notebookIds: ['nb1'],
+      },
+      pages: { p1: blank('p1'), p2: blank('p2'), p3: blank('p3') },
+      notebookId: 'nb1',
+      sectionId: 'sec1',
+      pageId: 'p1',
+    });
+
+    render(<PageOutline />);
+    expect(screen.getByTestId('outline-thumbs')).toBeInTheDocument();
+    expect(screen.getByText('1 · Pagina Uno')).toBeInTheDocument();
+    expect(screen.getByText('2 · Pagina Due')).toBeInTheDocument();
+    expect(screen.queryByText(/Altra Sezione/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('2 · Pagina Due'));
+    expect(useStore.getState().pageId).toBe('p2');
   });
 });

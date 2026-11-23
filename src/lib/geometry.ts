@@ -98,6 +98,7 @@ export function worldPoints(item: CanvasItem, items: Record<string, CanvasItem>)
     if (item.kind === 'rect' || item.kind === 'ellipse') {
       return [map(item.x1, item.y1), map(item.x2, item.y1), map(item.x2, item.y2), map(item.x1, item.y2)];
     }
+    if (item.bend) return sampleBend(item).map((q) => map(q.x, q.y));
     return [map(item.x1, item.y1), map(item.x2, item.y2)];
   }
   return [];
@@ -496,4 +497,24 @@ export function arrowHeadPath(from: Point, to: Point, size: number): string {
   const a1 = ang + Math.PI - Math.PI / 7;
   const a2 = ang + Math.PI + Math.PI / 7;
   return `M ${to.x + Math.cos(a1) * size} ${to.y + Math.sin(a1) * size} L ${to.x} ${to.y} L ${to.x + Math.cos(a2) * size} ${to.y + Math.sin(a2) * size}`;
+}
+
+/** Quadratic control point so the curve passes through `bend` at t = 0.5. */
+export function bendControl(a: Point, b: Point, m: Point): Point {
+  return { x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2 };
+}
+
+/** Polyline approximation of a bent shape (local coordinates). */
+export function sampleBend(item: { x1: number; y1: number; x2: number; y2: number; bend?: Point }, steps = 24): Point[] {
+  const a = { x: item.x1, y: item.y1 };
+  const b = { x: item.x2, y: item.y2 };
+  if (!item.bend) return [a, b];
+  const c = bendControl(a, b, item.bend);
+  const out: Point[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    out.push({ x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y });
+  }
+  return out;
 }

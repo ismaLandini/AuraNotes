@@ -65,7 +65,13 @@ export function translateItem(it: CanvasItem, dx: number, dy: number): Partial<C
       return { points: pts };
     }
     case 'shape':
-      return { x1: it.x1 + dx, y1: it.y1 + dy, x2: it.x2 + dx, y2: it.y2 + dy };
+      return {
+        x1: it.x1 + dx,
+        y1: it.y1 + dy,
+        x2: it.x2 + dx,
+        y2: it.y2 + dy,
+        ...(it.bend ? { bend: { x: it.bend.x + dx, y: it.bend.y + dy } } : {}),
+      };
     case 'connector':
       return {};
   }
@@ -86,7 +92,13 @@ export function translateLocal(it: CanvasItem, ndx: number, ndy: number): Partia
       return { points: pts };
     }
     case 'shape':
-      return { x1: it.x1 + ndx, y1: it.y1 + ndy, x2: it.x2 + ndx, y2: it.y2 + ndy };
+      return {
+        x1: it.x1 + ndx,
+        y1: it.y1 + ndy,
+        x2: it.x2 + ndx,
+        y2: it.y2 + ndy,
+        ...(it.bend ? { bend: { x: it.bend.x + ndx, y: it.bend.y + ndy } } : {}),
+      };
     default:
       return {};
   }

@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import type { CanvasItem, ConnectorItem, ID, ImageItem, PageContent, Point, ShapeItem, StrokeItem, TextItem } from '../types';
-import { arrowHeadPath, connectorEndpoints, itemBounds, smoothPath } from '../lib/geometry';
+import { arrowHeadPath, bendControl, connectorEndpoints, itemBounds, smoothPath } from '../lib/geometry';
 import { useAssetUrl } from '../storage/assets';
 import { StaticRichText } from '../editor/StaticRichText';
 import { MIN_TEXT_WIDTH, MAX_TEXT_WIDTH } from './actions';
@@ -50,11 +50,13 @@ export function shapeElement(item: ShapeItem, map: MapFn = identity, key?: strin
     );
   }
   const head = Math.max(10, item.width * 4);
+  const m = item.bend ? map(item.bend.x, item.bend.y) : null;
+  const c = m ? bendControl(a, b, m) : null;
   return (
     <g key={key} fill="none" {...common}>
-      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
-      {(item.kind === 'arrow' || item.kind === 'double-arrow') && <path d={arrowHeadPath(a, b, head)} />}
-      {item.kind === 'double-arrow' && <path d={arrowHeadPath(b, a, head)} />}
+      {c ? <path d={`M ${a.x} ${a.y} Q ${c.x} ${c.y} ${b.x} ${b.y}`} /> : <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />}
+      {(item.kind === 'arrow' || item.kind === 'double-arrow') && <path d={arrowHeadPath(c ?? a, b, head)} />}
+      {item.kind === 'double-arrow' && <path d={arrowHeadPath(c ?? b, a, head)} />}
     </g>
   );
 }

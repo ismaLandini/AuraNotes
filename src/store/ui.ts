@@ -58,6 +58,7 @@ interface UIState {
   pdfDialogOpen: boolean;
   templatePickerOpen: boolean;
   outlineOpen: boolean;
+  focusMode: boolean;
   mobileNavOpen: boolean;
   set: (patch: Partial<Omit<UIState, 'set'>>) => void;
 }
@@ -82,6 +83,7 @@ export const useUI = create<UIState>((set) => ({
   pdfDialogOpen: false,
   templatePickerOpen: false,
   outlineOpen: false,
+  focusMode: false,
   mobileNavOpen: false,
   set: (patch) => set(patch),
 }));

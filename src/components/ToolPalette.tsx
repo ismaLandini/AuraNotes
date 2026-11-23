@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, PanelLeft, Pen, Plus, Spline, Square, StickyNote, Type } from 'lucide-react';
+import { LayoutGrid, Grid3x3, GripHorizontal, ArrowRight, Circle, Eraser, Hand, Highlighter, Maximize, Minus, MousePointer2, MoveHorizontal, PanelLeft, Pen, Plus, Spline, Square, StickyNote, Type } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import type { BackgroundPattern, Tool } from '../types';
 import { useSettings } from '../store/settings';
@@ -30,6 +30,36 @@ export function NavMiniMenu({ compact }: { compact?: boolean }) {
         data-testid="toggle-sidebar"
       >
         <PanelLeft size={18} />
+      </button>
+    </div>
+  );
+}
+
+export function DockActions() {
+  const outlineOpen = useUI((s) => s.outlineOpen);
+  const hasPage = useStore((s) => !!s.pageId);
+  if (!hasPage) return null;
+  return (
+    <div className="dock-actions" data-ui>
+      <span className="tool-sep" />
+      <button
+        className={`tool-btn${outlineOpen ? ' active' : ''}`}
+        onClick={() => useUI.getState().set({ outlineOpen: !outlineOpen })}
+        title={`Indice e miniature (${formatCombo('mod+shift+o')})`}
+        aria-label="Indice e miniature"
+        aria-pressed={outlineOpen}
+        data-testid="toggle-outline"
+      >
+        <LayoutGrid size={18} />
+      </button>
+      <button
+        className="tool-btn"
+        onClick={() => useUI.getState().set({ focusMode: true, outlineOpen: false })}
+        title={`Modalità Focus (${formatCombo('mod+alt+f')}) · Esc o clic per uscire`}
+        aria-label="Modalità Focus"
+        data-testid="toggle-focus"
+      >
+        <Maximize size={18} />
       </button>
     </div>
   );

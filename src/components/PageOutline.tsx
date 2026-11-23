@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
-import { AlignLeft, ArrowUpRight, FilePlus2, Hash, Link2, ListTree, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { PageThumb } from './PageThumb';
+import { AlignLeft, ArrowUpRight, FilePlus2, Hash, LayoutGrid, Link2, ListTree, X } from 'lucide-react';
 import { useUI } from '../store/ui';
 import { useStore } from '../store/useStore';
 import { revealRect } from '../canvas/viewport';
@@ -60,6 +61,8 @@ export function PageOutline() {
   const pages = useStore((s) => s.pages);
   const currentPage = pageId ? pages[pageId] ?? null : null;
   const selected = useStore((s) => s.selection);
+  const [tab, setTab] = useState<'titles' | 'thumbs'>('thumbs');
+  const sectionPageIds = ws.sections[sectionId ?? '']?.pageIds ?? [];
 
   const headings = useMemo(() => {
     if (!currentPage) return [];
@@ -109,6 +112,29 @@ export function PageOutline() {
         </button>
       </div>
 
+      <div className="outline-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'titles'} className={tab === 'titles' ? 'on' : ''} onClick={() => setTab('titles')} data-testid="outline-tab-titles">
+          <ListTree size={13} /> Titoli
+        </button>
+        <button role="tab" aria-selected={tab === 'thumbs'} className={tab === 'thumbs' ? 'on' : ''} onClick={() => setTab('thumbs')} data-testid="outline-tab-thumbs">
+          <LayoutGrid size={13} /> Miniature
+        </button>
+      </div>
+
+      {tab === 'thumbs' ? (
+        <div className="page-outline-body thumbs-body" data-testid="outline-thumbs">
+          {sectionPageIds.map((id, i) => {
+            const meta = ws.pages[id];
+            if (!meta) return null;
+            return (
+              <button key={id} type="button" className={`thumb-card${id === pageId ? ' current' : ''}`} onClick={() => void useStore.getState().openPage(id)} title={meta.title}>
+                <PageThumb pageId={id} updatedAt={meta.updatedAt} />
+                <span className="thumb-label">{i + 1} · {meta.title || 'Senza titolo'}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
       <div className="page-outline-body">
         <div className="outline-section">
           <div className="outline-section-label">
@@ -207,6 +233,7 @@ export function PageOutline() {
           </div>
         )}
       </div>
+      )}
     </aside>
   );
 }

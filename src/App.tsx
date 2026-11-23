@@ -8,7 +8,7 @@ import { Ribbon } from './components/Ribbon';
 import { SaveIndicator } from './components/SaveIndicator';
 import { Breadcrumb } from './components/Breadcrumb';
 import { FloatingFormatBar } from './components/FloatingFormatBar';
-import { NavMiniMenu, ToolPalette, ZoomControls } from './components/ToolPalette';
+import { DockActions, NavMiniMenu, ToolPalette, ZoomControls } from './components/ToolPalette';
 import { Canvas } from './canvas/Canvas';
 import { ConfirmDialog, PromptDialog, SearchDialog, ShortcutsOverlay, Toasts, TrashDialog } from './components/Dialogs';
 import { SettingsDialog, exportBackup } from './components/SettingsDialog';
@@ -65,7 +65,7 @@ function useTheme() {
       const dark = theme === 'dark' || (theme === 'system' && mq.matches);
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#081e42');
+      if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#faf4e5');
       void desktop()?.setTheme(theme, dark);
     };
     apply();
@@ -95,6 +95,55 @@ export default function App() {
   const homeOpen = useUI((s) => s.homeOpen);
   const compact = useCompact();
   useTheme();
+  const focusMode = useUI((s) => s.focusMode);
+
+  // Focus mode: Esc or any click/tap on the page brings the toolbars back.
+  useEffect(() => {
+    if (!focusMode) return;
+    const suppressFollowup = () => {
+      const swallow = (ev: Event) => {
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+      };
+      const types = ['pointerup', 'mouseup', 'click'] as const;
+      for (const type of types) window.addEventListener(type, swallow, { capture: true, once: true });
+      window.setTimeout(() => {
+        for (const type of types) window.removeEventListener(type, swallow, true);
+      }, 400);
+    };
+    const exitOnPointer = (e: Event) => {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      window.removeEventListener('pointerdown', exitOnPointer, true);
+      window.removeEventListener('click', exitOnClick, true);
+      suppressFollowup();
+      useUI.getState().set({ focusMode: false });
+    };
+    const exitOnClick = (e: Event) => {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      window.removeEventListener('pointerdown', exitOnPointer, true);
+      window.removeEventListener('click', exitOnClick, true);
+      useUI.getState().set({ focusMode: false });
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      useUI.getState().set({ focusMode: false });
+    };
+    const t = window.setTimeout(() => {
+      window.addEventListener('pointerdown', exitOnPointer, true);
+      window.addEventListener('click', exitOnClick, true);
+    }, 0);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('pointerdown', exitOnPointer, true);
+      window.removeEventListener('click', exitOnClick, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [focusMode]);
 
   useEffect(() => {
     void useStore.getState().init();
@@ -142,7 +191,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app${compact ? ' compact' : ''}${homeOpen ? ' is-home' : ''}`}>
+    <div className={`app${compact ? ' compact' : ''}${homeOpen ? ' is-home' : ''}${focusMode && !homeOpen ? ' focus' : ''}`}>
       <div className={`window-titlebar${isDesktop() ? ' is-desktop' : ''}`} data-ui>
         <span className="window-titlebar-title" aria-hidden="true">AuraNotes</span>
         {!homeOpen ? <Breadcrumb /> : <div className="titlebar-crumbs" />}
@@ -160,10 +209,6 @@ export default function App() {
           <div className="main">
             <main className="workspace">
               <div className="canvas-container">
-                <div className="vertical-tool-rail">
-                  <NavMiniMenu compact={compact} />
-                  <ToolPalette />
-                </div>
                 <div className="canvas-wrap">
                   {!compact && sidebarVisible && (
                     <>
@@ -184,6 +229,11 @@ export default function App() {
                   </ErrorBoundary>
                   <PageOutline />
                   <ZoomControls />
+                  <div className="bottom-dock glass" data-ui data-testid="bottom-dock">
+                    <NavMiniMenu compact={compact} />
+                    <ToolPalette />
+                    <DockActions />
+                  </div>
                 </div>
               </div>
             </main>

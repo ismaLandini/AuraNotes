@@ -191,6 +191,8 @@ export interface ShapeItem extends BaseItem {
   width: number;
   opacity: number;
   fill: string | null;
+  /** Point the (line/arrow) curve passes through at its middle; absent = straight. */
+  bend?: { x: number; y: number };
 }
 
 export interface ConnectorItem extends BaseItem {

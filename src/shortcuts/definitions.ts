@@ -98,7 +98,7 @@ export function buildShortcuts(): ShortcutDef[] {
       },
     },
     { id: 'sidebar', keys: ['mod+shift+b'], label: 'Mostra/nascondi pannelli di navigazione', category: 'Navigazione', scope: 'global', run: toggleSidebar },
-    { id: 'focus-mode', keys: ['mod+alt+f'], label: 'Modalità concentrazione (solo pagina)', category: 'Navigazione', scope: 'global', run: toggleSidebar },
+    { id: 'focus-mode', keys: ['mod+alt+f'], label: 'Modalità Focus (solo pagina)', category: 'Navigazione', scope: 'global', run: () => { if (!hasPage()) return false; const ui = useUI.getState(); ui.set({ focusMode: !ui.focusMode }); } },
     {
       id: 'print',
       keys: ['mod+p'],

@@ -2,7 +2,7 @@ import type { PageContent, Point, Rect, Viewport } from '../types';
 import { useStore } from '../store/useStore';
 import { useSettings } from '../store/settings';
 import { contentBounds } from '../lib/geometry';
-import { A4_HEIGHT, PAGE_WIDTH, SHEET_TOP, isPdfDocument, sheetBottom, sheetLeft, sheetRight } from '../lib/page';
+import { A4_HEIGHT, A4_WIDTH, PAGE_WIDTH, SHEET_TOP, getPageSheets, isPdfDocument, sheetBottom, sheetLeft, sheetRight } from '../lib/page';
 
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 6;
@@ -44,9 +44,6 @@ export function computeViewportBounds(
   bottom: number,
   page: PageContent | null | undefined,
 ) {
-  const sLeft = sheetLeft(page);
-  const sRight = sheetRight(page);
-  const totalW = sRight - sLeft;
   const isPdf = isPdfDocument(page);
   const topEdge = isPdf ? 0 : SHEET_TOP;
 
@@ -55,23 +52,11 @@ export function computeViewportBounds(
   const pageBottom = Math.max(bottom, topEdge + A4_HEIGHT);
   const maxY = Math.max(minY, pageBottom - vh + 160 / zoom);
 
-  // Horizontal boundary: when content fits in the viewport, lock centered in the middle
-  // of the workspace (like Microsoft Word) so the page does not shift horizontally.
-  // For imported PDFs, lock centered at normal/fit view (zoom <= 1.05) so the PDF
-  // stays completely fixed without lateral shifting (just like normal sheets),
-  // allowing horizontal scrolling only when user explicitly zooms in.
-  const centeredX = sLeft - (vw - totalW) / 2;
-  const padX = EDGE / zoom;
-  let minX: number;
-  let maxX: number;
-  const lockCentered = totalW + padX * 2 <= vw || (isPdf && zoom <= 1.05);
-  if (lockCentered) {
-    minX = centeredX;
-    maxX = centeredX;
-  } else {
-    minX = sLeft - padX;
-    maxX = Math.max(minX, sRight - vw + padX);
-  }
+  // Horizontal boundary: lock the sheet dead-center horizontally with no sideways panning.
+  const sheetW = Math.max(...getPageSheets(page).map((s) => s.width), A4_WIDTH);
+  const centeredX = -(vw - sheetW) / 2;
+  const minX = centeredX;
+  const maxX = centeredX;
 
   return { minX, maxX, minY, maxY, centeredX };
 }

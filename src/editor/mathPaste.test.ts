@@ -39,15 +39,23 @@ describe('mathPaste', () => {
     ]);
   });
 
-  it('protects currency values, escaped dollars, and code/backtick spans from conversion', () => {
-    const currencyDoc = parseTextWithMath('Prezzo $10 e $20, totale $30.50, oppure \\$100 + $x + \\$5$.');
-    expect(currencyDoc.content).toEqual([
+  it('formats numeric and adjacent-number $...$ expressions (e.g. $4$, $4 e 4$, 4$x$, $x$4) while still protecting escaped dollars and code spans', () => {
+    const numericDoc = parseTextWithMath('Valore $4$, intervallo $4 e 4$, prodotto 4$x$ e $y$4, più \\$100 + $x + \\$5$ e singolo $4 finale.');
+    expect(numericDoc.content).toEqual([
       {
         type: 'paragraph',
         content: [
-          { type: 'text', text: 'Prezzo $10 e $20, totale $30.50, oppure \\$100 + ' },
+          { type: 'text', text: 'Valore ' },
+          { type: 'mathInline', attrs: { latex: '4' } },
+          { type: 'text', text: ', intervallo ' },
+          { type: 'mathInline', attrs: { latex: '4 e 4' } },
+          { type: 'text', text: ', prodotto 4' },
+          { type: 'mathInline', attrs: { latex: 'x' } },
+          { type: 'text', text: ' e ' },
+          { type: 'mathInline', attrs: { latex: 'y' } },
+          { type: 'text', text: '4, più \\$100 + ' },
           { type: 'mathInline', attrs: { latex: 'x + \\$5' } },
-          { type: 'text', text: '.' },
+          { type: 'text', text: ' e singolo $4 finale.' },
         ],
       },
     ]);

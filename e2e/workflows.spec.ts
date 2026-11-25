@@ -437,8 +437,8 @@ test('drawing tools, image handling and backup', async ({ page }) => {
   items = await pageItems(page);
   expect(items.filter((i) => i.type === 'stroke')).toHaveLength(1);
 
-  // Straight line constrained with Shift
-  await page.keyboard.press('l');
+  // Straight arrow constrained with Shift
+  await page.keyboard.press('a');
   await page.keyboard.down('Shift');
   await page.mouse.move(box.x + 500, box.y + 500);
   await page.mouse.down();
@@ -446,8 +446,8 @@ test('drawing tools, image handling and backup', async ({ page }) => {
   await page.mouse.up();
   await page.keyboard.up('Shift');
   items = await pageItems(page);
-  const line = items.find((i) => i.type === 'shape') as unknown as { y1: number; y2: number };
-  expect(line.y1).toBeCloseTo(line.y2, 3);
+  const arrow = items.find((i) => i.type === 'shape') as unknown as { y1: number; y2: number };
+  expect(arrow.y1).toBeCloseTo(arrow.y2, 3);
 
   // Context menu closes with Escape
   await page.locator('.nav-item.page.active').click({ button: 'right' });

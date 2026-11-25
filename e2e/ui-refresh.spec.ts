@@ -25,12 +25,12 @@ test('two-row organized ribbon, breadcrumb and floating format bar', async ({ pa
   await expect(page.getByRole('button', { name: /Codice in linea/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Blocco di codice/ })).toBeVisible();
 
-  // breadcrumb shows Blocco › Sezione › Pagina and reveals the sidebar column
+  // breadcrumb shows Blocco › Sezione › Pagina and navigates to each dashboard level
   await expect(page.getByTestId('breadcrumb')).toBeVisible();
-  await page.getByRole('button', { name: 'Comprimi Sezioni' }).click();
-  await expect(page.getByRole('button', { name: 'Mostra Sezioni' })).toBeVisible();
-  await page.getByRole('button', { name: 'Mostra l’elenco delle sezioni' }).click();
-  await expect(page.getByRole('button', { name: 'Comprimi Sezioni' })).toBeVisible();
+  await page.getByTestId('crumb-section').click();
+  await expect(page.getByTestId('home-sections-grid')).toBeVisible();
+  await page.getByTestId('home-resume-workspace').click();
+  await expect(page.getByTestId('canvas')).toBeVisible();
 
   // text box with a selection → floating bar appears, and is hidden without a selection
   await page.evaluate(() => {

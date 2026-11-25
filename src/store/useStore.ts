@@ -439,11 +439,12 @@ export const useStore = create<AppState>((set, get) => ({
     if (!meta) return;
     const sec = ws.sections[meta.sectionId];
     const idx = sec.pageIds.indexOf(id);
+    const inHome = useUI.getState().homeOpen;
     get().mutateWorkspace((w) => W.trashPage(w, id));
     if (get().pageId === id) {
       const remaining = get().workspace.sections[sec.id].pageIds;
       const next = remaining[Math.min(idx, remaining.length - 1)];
-      if (next) void get().openPage(next);
+      if (next) void get().openPage(next, { keepHome: inHome, recordHistory: false });
       else set({ pageId: null, selection: [], editingId: null });
     }
   },
@@ -453,22 +454,44 @@ export const useStore = create<AppState>((set, get) => ({
     const sec = ws.sections[id];
     if (!sec) return;
     const wasCurrent = get().sectionId === id;
+    const inHome = useUI.getState().homeOpen;
     get().mutateWorkspace((w) => W.deleteSection(w, id));
     if (wasCurrent) {
       const nb = get().workspace.notebooks[sec.notebookId];
       const nextSec = nb?.sectionIds[0];
-      if (nextSec) get().selectSection(nextSec);
-      else set({ sectionId: null, pageId: null });
+      if (nextSec) {
+        if (inHome) {
+          const pid = get().workspace.sections[nextSec]?.pageIds[0] ?? null;
+          set({ sectionId: nextSec, notebookId: sec.notebookId, pageId: pid, selection: [], editingId: null });
+          if (pid) void get().ensurePageLoaded(pid);
+        } else {
+          get().selectSection(nextSec);
+        }
+      } else {
+        set({ sectionId: null, pageId: null, selection: [], editingId: null });
+      }
     }
   },
 
   deleteNotebook: (id) => {
     const wasCurrent = get().notebookId === id;
+    const inHome = useUI.getState().homeOpen;
     get().mutateWorkspace((w) => W.deleteNotebook(w, id));
     if (wasCurrent) {
       const next = get().workspace.notebookIds[0];
-      if (next) get().selectNotebook(next);
-      else set({ notebookId: null, sectionId: null, pageId: null });
+      if (next) {
+        if (inHome) {
+          const nextNb = get().workspace.notebooks[next];
+          const nextSec = nextNb?.sectionIds[0] ?? null;
+          const nextPid = nextSec ? (get().workspace.sections[nextSec]?.pageIds[0] ?? null) : null;
+          set({ notebookId: next, sectionId: nextSec, pageId: nextPid, selection: [], editingId: null });
+          if (nextPid) void get().ensurePageLoaded(nextPid);
+        } else {
+          get().selectNotebook(next);
+        }
+      } else {
+        set({ notebookId: null, sectionId: null, pageId: null, selection: [], editingId: null });
+      }
     }
   },
 

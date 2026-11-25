@@ -133,15 +133,19 @@ function ExportDialogInner() {
     return 'AuraNotes';
   }, [scope, pageId, sectionId, notebookId, ws]);
 
-  const job: PrintJob | null = activePages
-    ? {
-        pages: activePages,
-        options: opts,
-        docTitle,
-        paperClass: `paper-${settings.paper}`,
-        patternClass: `pattern-${settings.background}`,
-      }
-    : null;
+  const job: PrintJob | null = useMemo(
+    () =>
+      activePages
+        ? {
+            pages: activePages,
+            options: opts,
+            docTitle,
+            paperClass: `paper-${settings.paper}`,
+            patternClass: `pattern-${settings.background}`,
+          }
+        : null,
+    [activePages, opts, docTitle, settings.paper, settings.background],
+  );
   const sheetCount = job ? countSheets(job) : 0;
 
   const scalerRef = useRef<HTMLDivElement>(null);

@@ -457,4 +457,145 @@ describe('App', () => {
     const reorderedIds = Array.from(grid.querySelectorAll<HTMLElement>('.home-page-card[data-page-id]')).map((el) => el.dataset.pageId);
     expect(reorderedIds).toEqual([p2, p3, p1]);
   });
+
+  it('shows Liquid Glass DockToolOptions above bottom dock only when a color/width tool is selected, removes line tool, and keeps FormatBar in top Ribbon', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    const palette = await screen.findByTestId('tool-palette');
+
+    // Line tool is removed
+    expect(palette.querySelector('[data-tool="line"]')).toBeNull();
+
+    // Initially ('select'), dock-tool-options is hidden and FormatBar is in the top Ribbon
+    expect(screen.queryByTestId('dock-tool-options')).toBeNull();
+    expect(screen.getByTestId('format-bar')).toBeInTheDocument();
+
+    // Selecting Pen shows dock-tool-options while FormatBar remains in the top Ribbon
+    fireEvent.click(palette.querySelector('[data-tool="pen"]')!);
+    expect(useStore.getState().tool).toBe('pen');
+    expect(screen.getByTestId('dock-tool-options')).toBeInTheDocument();
+    expect(screen.getByTestId('format-bar')).toBeInTheDocument();
+
+    // Selecting Highlighter shows RED (#ff3b30) swatch instead of pink (#ff8fb8)
+    fireEvent.click(palette.querySelector('[data-tool="highlighter"]')!);
+    const dockOpts = screen.getByTestId('dock-tool-options');
+    expect(dockOpts.querySelector('[title="#ff3b30"]')).toBeInTheDocument();
+    expect(dockOpts.querySelector('[title="#ff8fb8"]')).toBeNull();
+
+    // Selecting Eraser (no color/width) hides dock-tool-options and keeps FormatBar in top Ribbon
+    fireEvent.click(palette.querySelector('[data-tool="eraser"]')!);
+    expect(screen.queryByTestId('dock-tool-options')).toBeNull();
+    expect(screen.getByTestId('format-bar')).toBeInTheDocument();
+
+    // Selecting Rect shows border, fill, and width; re-clicking Rect deselects it and hides dock-tool-options
+    fireEvent.click(palette.querySelector('[data-tool="rect"]')!);
+    expect(screen.getByTestId('dock-tool-options')).toHaveTextContent('Riempimento');
+    fireEvent.click(palette.querySelector('[data-tool="rect"]')!);
+    expect(useStore.getState().tool).toBe('select');
+    expect(screen.queryByTestId('dock-tool-options')).toBeNull();
+  });
+
+  it('navigates from Breadcrumb segments (Quaderno › Sezione › Pagina) to each corresponding Home dashboard level', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    const nbId = useStore.getState().notebookId!;
+    const secId = useStore.getState().sectionId!;
+
+    // 1. Click Pagina segment -> Pages grid of current Section
+    fireEvent.click(screen.getByTestId('crumb-page'));
+    expect(await screen.findByTestId('home-section-pages-grid')).toBeInTheDocument();
+    expect(useUI.getState().homeOpen).toBe(true);
+    expect(useUI.getState().homeNotebookId).toBe(nbId);
+    expect(useUI.getState().homeSectionId).toBe(secId);
+
+    // Return to workspace and click Sezione segment -> Sections grid of current Notebook
+    fireEvent.click(screen.getByTestId('home-resume-workspace'));
+    await screen.findByTestId('canvas');
+    fireEvent.click(screen.getByTestId('crumb-section'));
+    expect(await screen.findByTestId('home-sections-grid')).toBeInTheDocument();
+    expect(useUI.getState().homeNotebookId).toBe(nbId);
+    expect(useUI.getState().homeSectionId).toBeNull();
+
+    // Return to workspace and click Quaderno segment -> All Notebooks grid
+    fireEvent.click(screen.getByTestId('home-resume-workspace'));
+    await screen.findByTestId('canvas');
+    fireEvent.click(screen.getByTestId('crumb-notebook'));
+    expect(await screen.findByTestId('home-notebooks-grid')).toBeInTheDocument();
+    expect(useUI.getState().homeNotebookId).toBeNull();
+    expect(useUI.getState().homeSectionId).toBeNull();
+  });
+
+  it('supports top Ribbon controls across states (heading inside list, red text highlight, formatting without active editor, and rotating freeImage containers)', async () => {
+    useUI.getState().set({ homeOpen: false });
+    render(<App />);
+    await screen.findByTestId('canvas');
+    useStore.getState().setEditing(null);
+    useStore.getState().setSelection([]);
+
+    // 1. Clicking Bullet List when no editor is active creates & focuses a text container with a bullet list
+    fireEvent.click(screen.getByRole('button', { name: /^Elenco puntato/ }));
+    await waitFor(() => {
+      const active = useActiveEditor.getState().editor;
+      expect(active).not.toBeNull();
+      expect(active!.isActive('bulletList')).toBe(true);
+    });
+    const ed = useActiveEditor.getState().editor!;
+
+    // 2. Switching paragraph style to Heading 1 inside a bullet list lifts out cleanly and sets H1
+    ed.commands.insertContent('Titolo da lista');
+    const styleSelect = screen.getByRole('combobox', { name: 'Stile paragrafo' });
+    fireEvent.change(styleSelect, { target: { value: 'h1' } });
+    expect(ed.isActive('heading', { level: 1 })).toBe(true);
+
+    // 3. Text highlighter popover exposes RED (#ff6b6b) instead of pink (#ffc9de)
+    fireEvent.click(screen.getByRole('button', { name: 'Evidenziazione' }));
+    expect(document.querySelector('.popover [title="#ff6b6b"]')).toBeInTheDocument();
+    expect(document.querySelector('.popover [title="#ffc9de"]')).toBeNull();
+
+    // 4. Selecting a modern freeImage container exposes Rotate buttons in SelectionActions and updates rotation
+    useStore.getState().setEditing(null);
+    const pid = useStore.getState().pageId!;
+    useStore.getState().updatePage((p) => ({
+      ...p,
+      items: {
+        ...p.items,
+        imgFree1: {
+          id: 'imgFree1',
+          type: 'container',
+          x: 100,
+          y: 200,
+          w: 200,
+          h: 150,
+          freeImage: true,
+          customW: true,
+          variant: 'plain',
+          doc: {
+            type: 'doc',
+            content: [{ type: 'imageBlock', attrs: { assetId: 'a1', width: 200, naturalWidth: 400, naturalHeight: 300, rotation: 0 } }],
+          },
+        },
+      },
+      order: [...p.order, 'imgFree1'],
+    }));
+    useStore.getState().setTool('select');
+    useStore.getState().setSelection(['imgFree1']);
+
+    const rotRight = await screen.findByRole('button', { name: 'Ruota a destra' });
+    fireEvent.click(rotRight);
+    const updatedImg = useStore.getState().pages[pid].items.imgFree1;
+    expect(updatedImg.type === 'container' && updatedImg.doc.content?.[0]?.attrs?.rotation).toBe(90);
+  });
+
+  it('keeps the user on the Home dashboard when deleting the currently active section or notebook from Home', async () => {
+    render(<App />);
+    await screen.findByTestId('home-view');
+    const curSecId = useStore.getState().sectionId!;
+    expect(curSecId).toBeTruthy();
+    expect(useUI.getState().homeOpen).toBe(true);
+
+    useStore.getState().deleteSection(curSecId);
+    expect(useUI.getState().homeOpen).toBe(true);
+    expect(useStore.getState().workspace.sections[curSecId]).toBeUndefined();
+  });
 });

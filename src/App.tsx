@@ -8,7 +8,7 @@ import { Ribbon } from './components/Ribbon';
 import { SaveIndicator } from './components/SaveIndicator';
 import { Breadcrumb } from './components/Breadcrumb';
 import { FloatingFormatBar } from './components/FloatingFormatBar';
-import { DockActions, NavMiniMenu, ToolPalette, ZoomControls } from './components/ToolPalette';
+import { DockActions, DockToolOptions, NavMiniMenu, ToolPalette, ZoomControls } from './components/ToolPalette';
 import { Canvas } from './canvas/Canvas';
 import { ConfirmDialog, PromptDialog, SearchDialog, ShortcutsOverlay, Toasts, TrashDialog } from './components/Dialogs';
 import { SettingsDialog, exportBackup } from './components/SettingsDialog';
@@ -65,7 +65,7 @@ function useTheme() {
       const dark = theme === 'dark' || (theme === 'system' && mq.matches);
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#faf4e5');
+      if (meta) meta.setAttribute('content', dark ? '#1e1e1e' : '#f9f9f9');
       void desktop()?.setTheme(theme, dark);
     };
     apply();
@@ -229,6 +229,7 @@ export default function App() {
                   </ErrorBoundary>
                   <PageOutline />
                   <ZoomControls />
+                  <DockToolOptions />
                   <div className="bottom-dock glass" data-ui data-testid="bottom-dock">
                     <NavMiniMenu compact={compact} />
                     <ToolPalette />

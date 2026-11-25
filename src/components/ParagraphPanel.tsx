@@ -12,6 +12,8 @@ import {
   type ParagraphFormatAttrs,
 } from '../editor/paragraphFormat';
 import { useActiveEditor } from '../editor/activeEditor';
+import { useStore } from '../store/useStore';
+import { runWithEditor } from './Ribbon';
 
 interface Props {
   editor?: Editor | null;
@@ -115,20 +117,23 @@ function StepperField({
 export function ParagraphPanel({ editor }: Props) {
   useActiveEditor((s) => s.tick);
 
+  const hasPage = useStore((s) => !!s.pageId);
   const state = getParagraphFormatState(editor);
   const [customLhSelected, setCustomLhSelected] = useState(false);
 
   const updateAttrs = useCallback(
     (attrs: Partial<ParagraphFormatAttrs>) => {
-      if (!editor || editor.isDestroyed) return;
-      editor.commands.setParagraphFormat(attrs);
+      runWithEditor(editor, (ed) => {
+        ed.commands.setParagraphFormat(attrs);
+      });
     },
     [editor],
   );
 
   const handleReset = useCallback(() => {
-    if (!editor || editor.isDestroyed) return;
-    editor.commands.resetParagraphFormat();
+    runWithEditor(editor, (ed) => {
+      ed.commands.resetParagraphFormat();
+    });
     setCustomLhSelected(false);
   }, [editor, setCustomLhSelected]);
 
@@ -149,7 +154,7 @@ export function ParagraphPanel({ editor }: Props) {
     lhDropdownVal = state.lineHeight;
   }
 
-  const disabled = !editor;
+  const disabled = !editor && !hasPage;
 
   return (
     <div className="paragraph-panel" data-testid="paragraph-panel" onMouseDown={(e) => e.stopPropagation()}>

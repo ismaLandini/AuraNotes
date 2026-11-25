@@ -101,35 +101,46 @@ describe('PageOutline', () => {
     expect(useStore.getState().selection).toEqual(['c2']);
   });
 
-  it('defaults to thumbnails of only the current section and switches page on click', () => {
+  it('defaults to Mac Preview-style thumbnails of the sheets of the current Page (not other section pages) and scrolls viewport on click', () => {
     const now = Date.now();
-    const blank = (id: string): PageContent => ({
-      id,
+    const multiSheetPage: PageContent = {
+      id: 'p1',
       schemaVersion: 3,
       items: {},
       order: [],
       background: { pattern: 'plain', paper: 'white' },
-    });
+      sheets: [
+        { id: 'sh-1', width: 794, height: 1123, type: 'blank' },
+        { id: 'sh-2', width: 794, height: 1123, type: 'blank' },
+        { id: 'sh-3', width: 794, height: 1123, type: 'blank' },
+      ],
+    };
+    const otherSectionPage: PageContent = {
+      id: 'p2',
+      schemaVersion: 3,
+      items: {},
+      order: [],
+      background: { pattern: 'plain', paper: 'white' },
+    };
     const prevWs = useStore.getState().workspace;
     useUI.setState({ outlineOpen: true });
     useStore.setState({
       workspace: {
         ...prevWs,
         notebooks: {
-          nb1: { id: 'nb1', name: 'Quaderno', color: '#3a6df0', sectionIds: ['sec1', 'sec2'], createdAt: now, updatedAt: now },
+          nb1: { id: 'nb1', name: 'Quaderno', color: '#3a6df0', sectionIds: ['sec1'], createdAt: now, updatedAt: now },
         },
         sections: {
           sec1: { id: 'sec1', notebookId: 'nb1', name: 'Sezione 1', color: '#3a6df0', pageIds: ['p1', 'p2'], createdAt: now, updatedAt: now },
-          sec2: { id: 'sec2', notebookId: 'nb1', name: 'Sezione 2', color: '#3a6df0', pageIds: ['p3'], createdAt: now, updatedAt: now },
         },
         pages: {
-          p1: { id: 'p1', sectionId: 'sec1', title: 'Pagina Uno', createdAt: now, updatedAt: now, searchText: '' },
-          p2: { id: 'p2', sectionId: 'sec1', title: 'Pagina Due', createdAt: now, updatedAt: now, searchText: '' },
-          p3: { id: 'p3', sectionId: 'sec2', title: 'Altra Sezione', createdAt: now, updatedAt: now, searchText: '' },
+          p1: { id: 'p1', sectionId: 'sec1', title: 'Documento Multi-Foglio', createdAt: now, updatedAt: now, searchText: '', sheetCount: 3 },
+          p2: { id: 'p2', sectionId: 'sec1', title: 'Altra Pagina Della Sezione', createdAt: now, updatedAt: now, searchText: '' },
         },
         notebookIds: ['nb1'],
       },
-      pages: { p1: blank('p1'), p2: blank('p2'), p3: blank('p3') },
+      pages: { p1: multiSheetPage, p2: otherSectionPage },
+      viewports: { p1: { x: 0, y: -132, zoom: 1 } },
       notebookId: 'nb1',
       sectionId: 'sec1',
       pageId: 'p1',
@@ -137,11 +148,15 @@ describe('PageOutline', () => {
 
     render(<PageOutline />);
     expect(screen.getByTestId('outline-thumbs')).toBeInTheDocument();
-    expect(screen.getByText('1 · Pagina Uno')).toBeInTheDocument();
-    expect(screen.getByText('2 · Pagina Due')).toBeInTheDocument();
-    expect(screen.queryByText(/Altra Sezione/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('outline-sheet-thumb-1')).toHaveClass('current');
+    expect(screen.getByTestId('outline-sheet-thumb-2')).toBeInTheDocument();
+    expect(screen.getByTestId('outline-sheet-thumb-3')).toBeInTheDocument();
+    // Does NOT show other pages of the section
+    expect(screen.queryByText(/Altra Pagina Della Sezione/)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('2 · Pagina Due'));
-    expect(useStore.getState().pageId).toBe('p2');
+    // Clicking sheet 3 scrolls the current page's viewport down to sheet 3 while keeping pageId === 'p1'
+    fireEvent.click(screen.getByTestId('outline-sheet-thumb-3'));
+    expect(useStore.getState().pageId).toBe('p1');
+    expect(useStore.getState().viewports.p1.y).toBeGreaterThan(2000);
   });
 });

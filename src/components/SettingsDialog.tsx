@@ -4,7 +4,7 @@ import { Modal } from './Dialogs';
 import { useSettings, type ThemeMode } from '../store/settings';
 import { askConfirm, confirmDanger, toast, useUI } from '../store/ui';
 import { dirty, useStore } from '../store/useStore';
-import { INK_COLORS } from './Ribbon';
+import { HL_INK, INK_COLORS } from './Ribbon';
 import { BackupValidationError, backupToAssets, buildBackup, downloadBlob, mergeWorkspaces, remapBackup, validateBackup } from '../storage/backup';
 import { putAsset, replaceAll, requestPersistence, saveAll, storageEstimate } from '../storage/db';
 import { flush } from '../storage/autosave';
@@ -167,7 +167,7 @@ export function SettingsDialog() {
           <div className="row">
             <span>Colore evidenziatore</span>
             <div className="mini-swatches">
-              {['#ffd60a', '#9cf06b', '#7cd4ff', '#ff8fb8', '#ffb35c'].map((c) => (
+              {HL_INK.map((c) => (
                 <button key={c} className={`swatch${s.highlighterColor === c ? ' active' : ''}`} style={{ background: c }} onClick={() => s.set({ highlighterColor: c })} aria-label={`Evidenziatore ${c}`} />
               ))}
             </div>

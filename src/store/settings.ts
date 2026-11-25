@@ -82,6 +82,7 @@ function load(): Settings {
     const parsed = JSON.parse(raw) as Partial<Settings> & { layoutVersion?: number; backgroundVersion?: number };
     // White pages became the default in 1.2: forget the old implicit "dots" default.
     if (parsed.backgroundVersion !== 2) delete parsed.background;
+    if (parsed.highlighterColor?.toLowerCase() === '#ff8fb8') parsed.highlighterColor = '#ff3b30';
     const layout = parsed.layoutVersion === LAYOUT_VERSION ? { ...DEFAULT_LAYOUT, ...(parsed.layout ?? {}) } : { ...DEFAULT_LAYOUT, sidebarVisible: parsed.layout?.sidebarVisible ?? true };
     return { ...DEFAULT_SETTINGS, ...parsed, layout };
   } catch {

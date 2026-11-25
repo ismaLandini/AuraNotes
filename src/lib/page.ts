@@ -9,8 +9,6 @@ const PX_PER_MM = 96 / 25.4;
 export const A4_WIDTH = Math.round(210 * PX_PER_MM); // 794 px
 /** Height of a single standard A4 sheet: 297 mm (~1123 px). */
 export const A4_HEIGHT = Math.round(297 * PX_PER_MM); // 1123 px
-/** Height of two A4 sheets: 594 mm (~2245 px). Kept for viewport margin calculations. */
-export const TWO_A4_HEIGHT = Math.round(594 * PX_PER_MM);
 
 /** Standard page width is now a single A4 sheet. */
 export const PAGE_WIDTH = A4_WIDTH;

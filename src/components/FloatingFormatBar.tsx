@@ -7,7 +7,7 @@ import { HIGHLIGHT_COLORS } from '../editor/extensions';
 import { promptLink } from '../editor/EditableRichText';
 import { isModalOpen, useUI } from '../store/ui';
 import { formatCombo } from '../shortcuts/registry';
-import { Btn, ICON_SIZE, Popover, Swatches, TEXT_COLORS } from './Ribbon';
+import { applyBlockStyle, Btn, ICON_SIZE, Popover, Swatches, TEXT_COLORS } from './Ribbon';
 
 const GAP = 10;
 const BAR_H = 36;
@@ -136,8 +136,7 @@ export function FloatingFormatBar() {
                   key={label}
                   className={`menu-item${active ? ' active' : ''}`}
                   onClick={() => {
-                    if (v === 'p') c().setParagraph().run();
-                    else c().setHeading({ level: v }).run();
+                    applyBlockStyle(editor, v);
                     close();
                   }}
                 >
@@ -168,10 +167,10 @@ export function FloatingFormatBar() {
             colors={TEXT_COLORS}
             value={color}
             allowNone="Colore predefinito"
-            onPick={(col) => {
+            onPick={(col, isCustom) => {
               if (col) c().setColor(col).run();
               else c().unsetColor().run();
-              close();
+              if (!isCustom) close();
             }}
           />
         )}
@@ -182,10 +181,10 @@ export function FloatingFormatBar() {
             colors={HIGHLIGHT_COLORS}
             value={(editor.getAttributes('highlight').color as string | undefined) ?? null}
             allowNone="Nessuna evidenziazione"
-            onPick={(col) => {
+            onPick={(col, isCustom) => {
               if (col) c().setHighlight({ color: col }).run();
               else c().unsetHighlight().run();
-              close();
+              if (!isCustom) close();
             }}
           />
         )}

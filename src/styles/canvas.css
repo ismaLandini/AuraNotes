@@ -30,16 +30,6 @@
   background: var(--paper-white);
   color: #6e6e73;
 }
-.canvas-hint {
-  position: absolute;
-  top: 38%;
-  left: 0;
-  right: 0;
-  text-align: center;
-  color: #9a9aa2;
-  font-size: 14px;
-  pointer-events: none;
-}
 
 .world {
   position: absolute;
@@ -488,11 +478,6 @@
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
   fill: none;
-}
-.sel-dot {
-  fill: #fff;
-  stroke: var(--accent);
-  stroke-width: 1.5;
 }
 .handle {
   position: absolute;

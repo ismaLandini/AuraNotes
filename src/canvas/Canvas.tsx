@@ -115,7 +115,7 @@ interface Preview {
 
 const DRAG_THRESHOLD = 3;
 const GRID = 20;
-const DRAW_TOOLS: Tool[] = ['pen', 'highlighter', 'eraser', 'line', 'arrow', 'double-arrow', 'rect', 'ellipse', 'connector'];
+const DRAW_TOOLS: Tool[] = ['pen', 'highlighter', 'eraser', 'arrow', 'double-arrow', 'rect', 'ellipse', 'connector'];
 
 function worldDeltaToLocal(parent: ImageItem, dx: number, dy: number): Point {
   const r = rotatePoint({ x: dx, y: dy }, { x: 0, y: 0 }, -parent.rotation);
@@ -813,7 +813,6 @@ export function Canvas() {
         eraseAt(world);
         break;
       }
-      case 'line':
       case 'arrow':
       case 'double-arrow':
       case 'rect':
@@ -821,7 +820,7 @@ export function Canvas() {
         if (latestSel.length) st.setSelection([]);
         const parent = topImageAt(activeCur, world);
         const imageBlockHit = !parent ? findImageBlockHitAt(containerRef.current, e.clientX, e.clientY, toWorld) : null;
-        const startHit = tool === 'arrow' || tool === 'line' || tool === 'double-arrow' ? connectTargetAt(activeCur, world, 12 / v.zoom, null) : null;
+        const startHit = tool === 'arrow' || tool === 'double-arrow' ? connectTargetAt(activeCur, world, 12 / v.zoom, null) : null;
         gesture.current = {
           kind: 'shape',
           shape: tool,

@@ -260,7 +260,6 @@ export type Tool =
   | 'pen'
   | 'highlighter'
   | 'eraser'
-  | 'line'
   | 'arrow'
   | 'double-arrow'
   | 'rect'

@@ -86,13 +86,13 @@ pub fn save_theme_state(user_data_dir: &Path, theme: &str) {
     }
 }
 
-/// Native window background color matching `desktop/main.cjs`:
-/// `#1e1e1e` in dark mode, `#081e42` in light mode.
+/// Native window background color:
+/// `#1e1e1e` in dark mode, `#f9f9f9` in light mode.
 pub fn background_color_for_dark(dark: bool) -> Color {
     if dark {
         Color(0x1e, 0x1e, 0x1e, 0xff)
     } else {
-        Color(0x08, 0x1e, 0x42, 0xff)
+        Color(0xf9, 0xf9, 0xf9, 0xff)
     }
 }
 
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(load_theme_state(&dir), "light");
 
         assert_eq!(background_color_for_dark(true), Color(0x1e, 0x1e, 0x1e, 0xff));
-        assert_eq!(background_color_for_dark(false), Color(0x08, 0x1e, 0x42, 0xff));
+        assert_eq!(background_color_for_dark(false), Color(0xf9, 0xf9, 0xf9, 0xff));
 
         let _ = fs::remove_dir_all(&dir);
     }

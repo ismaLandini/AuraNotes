@@ -3,6 +3,7 @@ import {
   CHROMIUM_CANVAS_LIMITS,
   SAFARI_SAFE_CANVAS_LIMITS,
   computePageScale,
+  detectCanvasLimits,
   estimatePdfImportBytes,
   normalizeRotation,
   parsePageRange,
@@ -93,5 +94,32 @@ describe('parsePageRange', () => {
     const webpEst = estimatePdfImportBytes(10, 1024 * 1024, 'high', 'webp');
     expect(webpEst).toBeLessThan(pngEst);
     expect(pngEst).toBeGreaterThan(1024 * 1024);
+  });
+});
+
+describe('detectCanvasLimits WebKit detection', () => {
+  it('detects Safari, Tauri WKWebView, and iOS WebKit as SAFARI_SAFE_CANVAS_LIMITS', () => {
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'),
+    ).toEqual(SAFARI_SAFE_CANVAS_LIMITS);
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'),
+    ).toEqual(SAFARI_SAFE_CANVAS_LIMITS);
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'),
+    ).toEqual(SAFARI_SAFE_CANVAS_LIMITS);
+  });
+
+  it('detects Chromium, Electron, Firefox, and empty UA as CHROMIUM_CANVAS_LIMITS', () => {
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'),
+    ).toEqual(CHROMIUM_CANVAS_LIMITS);
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Electron/28.0.0 Safari/537.36'),
+    ).toEqual(CHROMIUM_CANVAS_LIMITS);
+    expect(
+      detectCanvasLimits('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0'),
+    ).toEqual(CHROMIUM_CANVAS_LIMITS);
+    expect(detectCanvasLimits('')).toEqual(CHROMIUM_CANVAS_LIMITS);
   });
 });

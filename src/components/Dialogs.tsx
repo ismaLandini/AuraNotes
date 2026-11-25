@@ -330,9 +330,23 @@ function SearchDialogInner() {
   const go = (r: Result) => {
     close();
     const st = useStore.getState();
-    if (r.kind === 'notebook') st.selectNotebook(r.id);
-    else if (r.kind === 'section') st.selectSection(r.id);
-    else void st.openPage(r.id).then(() => locateInPage(r.id, q.trim()));
+    const ui = useUI.getState();
+    if (r.kind === 'notebook') {
+      if (ui.homeOpen || !st.workspace.notebooks[r.id]?.sectionIds.some((sid) => st.workspace.sections[sid]?.pageIds.length)) {
+        ui.set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: r.id, homeSectionId: null });
+      } else {
+        st.selectNotebook(r.id);
+      }
+    } else if (r.kind === 'section') {
+      const sec = st.workspace.sections[r.id];
+      if (ui.homeOpen && sec) {
+        ui.set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: sec.notebookId, homeSectionId: r.id });
+      } else {
+        st.selectSection(r.id);
+      }
+    } else {
+      void st.openPage(r.id).then(() => locateInPage(r.id, q.trim()));
+    }
   };
   const query = q.trim().toLowerCase();
   const safeActive = Math.min(active, Math.max(0, results.length - 1));

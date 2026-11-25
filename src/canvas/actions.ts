@@ -3,9 +3,9 @@ import { generateJSON } from '@tiptap/core';
 import { Node as ProseMirrorNode, Slice } from '@tiptap/pm/model';
 import type { CanvasItem, ID, NoteContainerItem, PageContent, Point, Rect, TextItem } from '../types';
 import { useStore } from '../store/useStore';
-import { useSettings } from '../store/settings';
 import { isModalOpen, toast, useUI } from '../store/ui';
 import * as P from '../model/pageOps';
+import { isFreeImageContainer } from '../model/pageOps';
 import { newId } from '../model/workspaceOps';
 import { dataUrlToBlob, importImageBlob, SUPPORTED_IMAGE_TYPES } from '../storage/assets';
 import { getViewport, insertionPoint, revealRect, screenSize } from './viewport';
@@ -172,9 +172,23 @@ export function rotateSelectedImages(deg: number): void {
   const patches: Record<ID, Partial<CanvasItem>> = {};
   for (const id of useStore.getState().selection) {
     const it = p.items[id];
-    if (it?.type === 'image') patches[id] = { rotation: (((it.rotation + deg) % 360) + 360) % 360 };
+    if (it?.type === 'image') {
+      patches[id] = { rotation: (((it.rotation + deg) % 360) + 360) % 360 };
+    } else if (it && (it.type === 'container' || it.type === 'text') && isFreeImageContainer(it) && it.doc?.content?.[0]?.type === 'imageBlock') {
+      const block = it.doc.content[0];
+      const curRot = Number(block.attrs?.rotation || 0);
+      const nextRot = (((curRot + deg) % 360) + 360) % 360;
+      patches[id] = {
+        doc: {
+          ...it.doc,
+          content: [{ ...block, attrs: { ...block.attrs, rotation: nextRot } }, ...it.doc.content.slice(1)],
+        },
+      };
+    }
   }
-  useStore.getState().updatePage((pg) => P.updateItems(pg, patches));
+  if (Object.keys(patches).length > 0) {
+    useStore.getState().updatePage((pg) => P.updateItems(pg, patches));
+  }
 }
 
 export function patchSelection(patch: (it: CanvasItem) => Partial<CanvasItem> | null): void {
@@ -217,6 +231,9 @@ export function createTextBlock(at: Point, opts: { variant?: 'plain' | 'sticky';
   // When editing starts immediately, the edit session records the creation in history.
   if (opts.edit !== false && !editSession.pendingBefore) editSession.pendingBefore = s.currentPage();
   s.updatePage((p) => P.pruneEmptyTextItems(P.addItems(p, [item]), item.id), opts.edit === false);
+  if (opts.edit !== false && s.tool !== 'select' && s.tool !== 'text' && s.tool !== 'sticky') {
+    s.setTool('select');
+  }
   s.setSelection([item.id]);
   if (opts.edit !== false) s.setEditing(item.id);
   return item.id;
@@ -748,13 +765,6 @@ export async function handlePaste(e: ClipboardEvent, opts: { plain?: boolean } =
   }
   return false;
 }
-
-export function canvasHasFocus(): boolean {
-  const a = document.activeElement;
-  return !a || a === document.body || !!(a instanceof HTMLElement && a.closest('[data-canvas-root]'));
-}
-
-export const settingsForTool = () => useSettings.getState();
 
 export function groupSelection(): void {
   const ids = topLevelSelection();

@@ -45,15 +45,6 @@ function findCodeSpans(src: string): ProtectedSpan[] {
   return spans;
 }
 
-/** Heuristic to avoid converting currency amounts like `$10`, `$10.50`, or `$10 and $20` into inline math. */
-function looksLikeCurrency(inner: string): boolean {
-  if (/^\d[\d.,]*$/.test(inner)) return true;
-  if (/^\d/.test(inner) && /\s/.test(inner) && !/[\\^_{}=<>+\-*/()]/.test(inner)) {
-    return true;
-  }
-  return false;
-}
-
 function findNextBlockDelimiter(src: string, from: number, open: '\\[' | '$$', close: '\\]' | '$$', limit: number): { end: number; latex: string } | null {
   const start = from + open.length;
   let pos = start;
@@ -87,7 +78,6 @@ function findNextInlineParen(src: string, from: number, limit: number): { end: n
 }
 
 function findNextInlineDollar(src: string, from: number, limit: number): { end: number; latex: string } | null {
-  if (from > 0 && /\d/.test(src[from - 1])) return null;
   if (from + 1 >= limit || /\s/.test(src[from + 1]) || src[from + 1] === '$') return null;
 
   let pos = from + 1;
@@ -95,13 +85,13 @@ function findNextInlineDollar(src: string, from: number, limit: number): { end: 
     const ch = src[pos];
     if (ch === '\n' || ch === '\r') return null;
     if (ch === '$' && !isEscaped(src, pos)) {
-      if (pos + 1 < src.length && (src[pos + 1] === '$' || /\d/.test(src[pos + 1]))) {
+      if (pos + 1 < src.length && src[pos + 1] === '$') {
         return null;
       }
       if (/\s/.test(src[pos - 1])) return null;
       const inner = src.slice(from + 1, pos);
       const latex = inner.trim();
-      if (!latex || looksLikeCurrency(latex)) return null;
+      if (!latex) return null;
       return { end: pos + 1, latex };
     }
     pos++;

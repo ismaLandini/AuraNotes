@@ -5,8 +5,8 @@ import type { BackgroundPattern, Tool } from '../types';
 import { useSettings } from '../store/settings';
 import { useUI } from '../store/ui';
 import { formatCombo } from '../shortcuts/registry';
-import { fitContent, resetZoom, zoomAt } from '../canvas/viewport';
-import { defaultViewport } from '../canvas/viewport';
+import { fitContent, resetZoom, zoomAt, defaultViewport } from '../canvas/viewport';
+import { HL_INK, INK_COLORS, Swatches, WidthSlider } from './Ribbon';
 
 export function NavMiniMenu({ compact }: { compact?: boolean }) {
   const sidebarVisible = useSettings((s) => s.layout.sidebarVisible);
@@ -73,13 +73,104 @@ export const TOOL_DEFS: Array<{ tool: Tool; label: string; key: string; icon: Re
   { tool: 'pen', label: 'Penna', key: 'p', icon: <Pen size={18} />, group: 2 },
   { tool: 'highlighter', label: 'Evidenziatore', key: 'm', icon: <Highlighter size={18} />, group: 2 },
   { tool: 'eraser', label: 'Gomma', key: 'e', icon: <Eraser size={18} />, group: 2 },
-  { tool: 'line', label: 'Linea (⇧ per angoli di 45°)', key: 'l', icon: <Minus size={18} style={{ transform: 'rotate(-45deg)' }} />, group: 3 },
   { tool: 'arrow', label: 'Freccia (da un oggetto a un altro crea un connettore)', key: 'a', icon: <ArrowRight size={18} />, group: 3 },
   { tool: 'double-arrow', label: 'Doppia freccia', key: 'd', icon: <MoveHorizontal size={18} />, group: 3 },
   { tool: 'rect', label: 'Rettangolo (⇧ per quadrato)', key: 'r', icon: <Square size={18} />, group: 3 },
   { tool: 'ellipse', label: 'Ellisse (⇧ per cerchio)', key: 'o', icon: <Circle size={18} />, group: 3 },
   { tool: 'connector', label: 'Connettore tra oggetti', key: 'c', icon: <Spline size={18} />, group: 4 },
 ];
+
+const STYLED_DOCK_TOOLS: ReadonlySet<Tool> = new Set([
+  'pen',
+  'highlighter',
+  'arrow',
+  'double-arrow',
+  'rect',
+  'ellipse',
+  'connector',
+]);
+
+export function DockToolOptions() {
+  const tool = useStore((s) => s.tool);
+  const hasPage = useStore((s) => !!s.pageId);
+  const s = useSettings();
+  const barRef = useRef<HTMLDivElement>(null);
+
+  const visible = hasPage && STYLED_DOCK_TOOLS.has(tool);
+
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || !visible) return;
+    const onWheel = (e: WheelEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      ref={barRef}
+      className="dock-tool-options glass"
+      data-ui
+      data-testid="dock-tool-options"
+      role="toolbar"
+      aria-label="Opzioni colore e spessore strumento"
+    >
+      {tool === 'pen' && (
+        <>
+          <span className="dto-label">Colore</span>
+          <Swatches colors={INK_COLORS} value={s.penColor} onPick={(c) => c && s.set({ penColor: c })} />
+          <span className="tool-sep" />
+          <WidthSlider value={s.penWidth} min={0.5} max={12} step={0.5} onChange={(v) => s.set({ penWidth: v })} />
+        </>
+      )}
+
+      {tool === 'highlighter' && (
+        <>
+          <span className="dto-label">Colore</span>
+          <Swatches colors={HL_INK} value={s.highlighterColor} onPick={(c) => c && s.set({ highlighterColor: c })} />
+          <span className="tool-sep" />
+          <WidthSlider value={s.highlighterWidth} min={6} max={40} step={1} onChange={(v) => s.set({ highlighterWidth: v })} />
+        </>
+      )}
+
+      {(tool === 'arrow' || tool === 'double-arrow' || tool === 'rect' || tool === 'ellipse') && (
+        <>
+          <span className="dto-label">{tool === 'rect' || tool === 'ellipse' ? 'Bordo' : 'Colore'}</span>
+          <Swatches colors={INK_COLORS} value={s.shapeColor} onPick={(c) => c && s.set({ shapeColor: c })} />
+          {(tool === 'rect' || tool === 'ellipse') && (
+            <>
+              <span className="tool-sep" />
+              <span className="dto-label">Riempimento</span>
+              <Swatches
+                colors={['#ffe066', '#a5d8ff', '#b2f2bb', '#ffc9de']}
+                value={s.shapeFill}
+                allowNone="Nessuno"
+                onPick={(c) => s.set({ shapeFill: c })}
+                allowCustom={false}
+              />
+            </>
+          )}
+          <span className="tool-sep" />
+          <WidthSlider value={s.shapeWidth} min={1} max={12} step={0.5} onChange={(v) => s.set({ shapeWidth: v })} />
+        </>
+      )}
+
+      {tool === 'connector' && (
+        <>
+          <span className="dto-label">Colore</span>
+          <Swatches colors={INK_COLORS} value={s.connectorColor} onPick={(c) => c && s.set({ connectorColor: c })} />
+          <span className="tool-sep" />
+          <WidthSlider value={s.connectorWidth} min={1} max={8} step={0.5} onChange={(v) => s.set({ connectorWidth: v })} />
+        </>
+      )}
+    </div>
+  );
+}
 
 export function ToolPalette() {
   const tool = useStore((s) => s.tool);

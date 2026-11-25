@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { PageThumb } from './PageThumb';
+import { SheetThumb } from './PageThumb';
 import { AlignLeft, ArrowUpRight, FilePlus2, Hash, LayoutGrid, Link2, ListTree, X } from 'lucide-react';
 import { useUI } from '../store/ui';
 import { useStore } from '../store/useStore';
-import { revealRect } from '../canvas/viewport';
+import { defaultViewport, getViewport, revealRect, screenSize, setVp } from '../canvas/viewport';
 import { itemBounds } from '../lib/geometry';
+import { computeSheetLayouts, isPdfDocument, SHEET_TOP, type SheetLayout } from '../lib/page';
 import * as W from '../model/workspaceOps';
 import * as P from '../model/pageOps';
 import type { JSONContent } from '@tiptap/core';
@@ -60,9 +61,24 @@ export function PageOutline() {
   const sectionId = useStore((s) => s.sectionId);
   const pages = useStore((s) => s.pages);
   const currentPage = pageId ? pages[pageId] ?? null : null;
+  const pageTitle = pageId ? ws.pages[pageId]?.title ?? '' : '';
+  const vp = useStore((s) => (s.pageId ? s.viewports[s.pageId] : undefined));
   const selected = useStore((s) => s.selection);
   const [tab, setTab] = useState<'titles' | 'thumbs'>('thumbs');
-  const sectionPageIds = ws.sections[sectionId ?? '']?.pageIds ?? [];
+
+  const sheetLayouts = useMemo(() => (currentPage ? computeSheetLayouts(currentPage) : []), [currentPage]);
+
+  const activeSheetIndex = useMemo(() => {
+    if (sheetLayouts.length <= 1) return 0;
+    const curVp = vp ?? defaultViewport(currentPage);
+    const { h: screenH } = screenSize();
+    const probeY = curVp.y + (screenH / curVp.zoom) * 0.35;
+    let best = 0;
+    for (let i = 0; i < sheetLayouts.length; i++) {
+      if (probeY >= sheetLayouts[i].y) best = i;
+    }
+    return best;
+  }, [sheetLayouts, vp, currentPage]);
 
   const headings = useMemo(() => {
     if (!currentPage) return [];
@@ -99,13 +115,23 @@ export function PageOutline() {
     }
   };
 
+  const jumpToSheet = (layout: SheetLayout) => {
+    if (!currentPage) return;
+    const curVp = getViewport();
+    const isPdf = isPdfDocument(currentPage);
+    const targetY = layout.index === 0 && !isPdf ? SHEET_TOP - 24 / curVp.zoom : layout.y - 24 / curVp.zoom;
+    setVp({ ...curVp, y: targetY });
+  };
+
+  const pillCount = tab === 'thumbs' ? sheetLayouts.length : headings.length + backlinks.length;
+
   return (
     <aside className="page-outline-panel glass-strong" data-ui aria-label="Indice della pagina">
       <div className="page-outline-header">
         <div className="page-outline-title">
           <ListTree size={16} />
           <span>Indice e Collegamenti</span>
-          <span className="outline-count-pill">{headings.length + backlinks.length}</span>
+          <span className="outline-count-pill">{pillCount}</span>
         </div>
         <button className="icon-btn xs" onClick={close} title="Chiudi indice" aria-label="Chiudi indice">
           <X size={14} />
@@ -123,16 +149,21 @@ export function PageOutline() {
 
       {tab === 'thumbs' ? (
         <div className="page-outline-body thumbs-body" data-testid="outline-thumbs">
-          {sectionPageIds.map((id, i) => {
-            const meta = ws.pages[id];
-            if (!meta) return null;
-            return (
-              <button key={id} type="button" className={`thumb-card${id === pageId ? ' current' : ''}`} onClick={() => void useStore.getState().openPage(id)} title={meta.title}>
-                <PageThumb pageId={id} updatedAt={meta.updatedAt} />
-                <span className="thumb-label">{i + 1} · {meta.title || 'Senza titolo'}</span>
+          {currentPage &&
+            sheetLayouts.map((layout) => (
+              <button
+                key={layout.sheet.id}
+                type="button"
+                className={`thumb-card${layout.index === activeSheetIndex ? ' current' : ''}`}
+                onClick={() => jumpToSheet(layout)}
+                title={`Pagina ${layout.index + 1}`}
+                aria-label={`Vai a pagina ${layout.index + 1}`}
+                data-testid={`outline-sheet-thumb-${layout.index + 1}`}
+              >
+                <SheetThumb page={currentPage} layout={layout} pageTitle={pageTitle} />
+                <span className="thumb-label">{layout.index + 1}</span>
               </button>
-            );
-          })}
+            ))}
         </div>
       ) : (
       <div className="page-outline-body">

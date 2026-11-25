@@ -64,13 +64,13 @@ import { promptLink } from '../editor/EditableRichText';
 import { TableMenu } from './TableMenu';
 import { ParagraphPanel } from './ParagraphPanel';
 import { useStore } from '../store/useStore';
-import { useSettings } from '../store/settings';
 import { askText, toast, useUI } from '../store/ui';
-import type { CanvasItem, ConnectorItem, Tool } from '../types';
+import type { CanvasItem, ConnectorItem, NoteContainerItem, TextItem } from '../types';
 import {
   createTextBlock,
   deleteSelection,
   duplicateSelection,
+  finishEditing,
   groupSelection,
   patchSelection,
   pickImageFiles,
@@ -86,7 +86,94 @@ import { isFreeImageContainer } from '../model/pageOps';
 export const INK_COLORS = ['#1d1d1f', '#1f3a93', '#0a84ff', '#30a46c', '#e5484d', '#f76b15', '#8e4ec6', '#ffffff'];
 export const TEXT_COLORS = ['#1d1d1f', '#6e6e73', '#e5484d', '#f76b15', '#c99a00', '#30a46c', '#0a84ff', '#8e4ec6'];
 const STICKY_COLORS = ['#fff4b8', '#ffe0e9', '#dff3ff', '#e2f8e5', '#efe6ff', '#ffe8d1', '#f2f2f7'];
-const HL_INK = ['#ffd60a', '#9cf06b', '#7cd4ff', '#ff8fb8', '#ffb35c', '#c4a6ff'];
+export const HL_INK = ['#ffd60a', '#9cf06b', '#7cd4ff', '#ff3b30', '#ffb35c', '#c4a6ff'];
+
+const FONT_OPTIONS = [
+  { label: 'Sistema', value: '' },
+  { label: 'Serif', value: "'New York', 'Iowan Old Style', Georgia, serif" },
+  { label: 'Monospazio', value: "'SF Mono', ui-monospace, Menlo, monospace" },
+  { label: 'Avenir', value: "'Avenir Next', Avenir, sans-serif" },
+  { label: 'Corsivo', value: "'Bradley Hand', 'Segoe Print', cursive" },
+];
+const PRESET_FONT_SIZES = ['6px', '7px', '8px', '9px', '10px', '11px', '13px', '15px', '17px', '20px', '24px', '30px', '36px'];
+
+function normFont(f?: string | null): string {
+  return (f ?? '').replace(/["']/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+export function applyBlockStyle(ed: Editor, style: 'p' | 1 | 2 | 3): void {
+  let chain = ed.chain().focus();
+  if (ed.isActive('listItem')) chain = chain.liftListItem('listItem');
+  else if (ed.isActive('taskItem')) chain = chain.liftListItem('taskItem');
+  if (ed.isActive('blockquote') && style !== 'p') chain = chain.unsetBlockquote();
+  if (style === 'p') {
+    const ok = chain.setParagraph().run();
+    if (!ok) ed.chain().focus().clearNodes().run();
+  } else {
+    const ok = chain.setHeading({ level: style }).run();
+    if (!ok) {
+      ed.chain().focus().clearNodes().setHeading({ level: style }).run();
+    }
+  }
+}
+
+/**
+ * Runs a command on the active TipTap editor, or activates/creates a text container
+ * on the current page when the user clicks a top-toolbar formatting/insert button directly.
+ */
+export function runWithEditor(
+  currentEditor: Editor | null | undefined,
+  fn: (ed: Editor) => void,
+  mode: 'format' | 'insert' = 'format',
+): void {
+  const live = currentEditor && !currentEditor.isDestroyed ? currentEditor : useActiveEditor.getState().editor;
+  if (live && !live.isDestroyed) {
+    fn(live);
+    return;
+  }
+  const st = useStore.getState();
+  const curPage = st.currentPage();
+  if (!curPage) {
+    toast('Apri o crea una pagina prima di usare questo strumento', 'error');
+    return;
+  }
+  const selectedText = st.selection
+    .map((id) => curPage.items[id])
+    .find(
+      (it): it is TextItem | NoteContainerItem =>
+        !!it && (it.type === 'text' || it.type === 'container') && !it.locked && !isFreeImageContainer(it),
+    );
+
+  let selectExisting = false;
+  let done = false;
+  const unsub = useActiveEditor.subscribe((state) => {
+    const mounted = state.editor;
+    if (!done && mounted && !mounted.isDestroyed) {
+      done = true;
+      unsub();
+      queueMicrotask(() => {
+        if (mounted.isDestroyed) return;
+        if (selectExisting) mounted.commands.selectAll();
+        fn(mounted);
+      });
+    }
+  });
+  setTimeout(() => {
+    if (!done) {
+      done = true;
+      unsub();
+    }
+  }, 1000);
+
+  if (selectedText) {
+    selectExisting = mode === 'format';
+    st.setSelection([selectedText.id]);
+    st.setEditing(selectedText.id);
+  } else {
+    if (st.tool !== 'select' && st.tool !== 'text') st.setTool('select');
+    createTextBlock(insertionPoint(), { edit: true });
+  }
+}
 
 export const ICON_SIZE = 16;
 export const CHEV_SIZE = 12;
@@ -154,11 +241,23 @@ function RibbonDivider() {
   return <div className="ribbon-divider" aria-hidden="true" />;
 }
 
-export function Popover({ trigger, title, testid, children }: { trigger: ReactNode; title: string; testid?: string; children: (close: () => void) => ReactNode }) {
+export function Popover({
+  trigger,
+  title,
+  testid,
+  disabled,
+  children,
+}: {
+  trigger: ReactNode;
+  title: string;
+  testid?: string;
+  disabled?: boolean;
+  children: (close: () => void) => ReactNode;
+}) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
-  const open = pos !== null;
+  const open = pos !== null && !disabled;
   useEffect(() => {
     if (!open) return;
     const close = (e: PointerEvent) => {
@@ -177,17 +276,19 @@ export function Popover({ trigger, title, testid, children }: { trigger: ReactNo
     };
   }, [open]);
   const toggle = () => {
+    if (disabled) return;
     if (open) return setPos(null);
     const r = ref.current!.getBoundingClientRect();
     setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 300)), top: r.bottom + 6 });
   };
   return (
     <div className="popover-wrap" ref={ref}>
-      <button className={`rb-btn with-chev${open ? ' active' : ''}`} onMouseDown={keepFocus} onClick={toggle} title={title} aria-label={title} aria-expanded={open} data-testid={testid}>
+      <button className={`rb-btn with-chev${open ? ' active' : ''}`} onMouseDown={keepFocus} onClick={toggle} title={title} aria-label={title} aria-expanded={open} disabled={disabled} data-testid={testid}>
         {trigger}
         <ChevronDown size={CHEV_SIZE} />
       </button>
-      {pos &&
+      {open &&
+        pos &&
         createPortal(
           <div ref={popRef} className="popover glass-strong" style={pos} onMouseDown={keepFocus} data-ui data-keep-editing>
             {children(() => setPos(null))}
@@ -207,27 +308,27 @@ export function Swatches({
 }: {
   colors: string[];
   value?: string | null;
-  onPick: (c: string | null) => void;
+  onPick: (c: string | null, isCustom?: boolean) => void;
   allowCustom?: boolean;
   allowNone?: string;
 }) {
   return (
     <div className="swatches">
-      {allowNone && <button className={`swatch none${!value ? ' active' : ''}`} onMouseDown={keepFocus} onClick={() => onPick(null)} title={allowNone} aria-label={allowNone} />}
+      {allowNone && <button className={`swatch none${!value ? ' active' : ''}`} onMouseDown={keepFocus} onClick={() => onPick(null, false)} title={allowNone} aria-label={allowNone} />}
       {colors.map((c) => (
         <button
           key={c}
           className={`swatch${value?.toLowerCase() === c.toLowerCase() ? ' active' : ''}`}
           style={{ background: c }}
           onMouseDown={keepFocus}
-          onClick={() => onPick(c)}
+          onClick={() => onPick(c, false)}
           title={c}
           aria-label={`Colore ${c}`}
         />
       ))}
       {allowCustom && (
         <label className="swatch custom" title="Colore personalizzato">
-          <input type="color" value={value && value.startsWith('#') && value.length === 7 ? value : '#000000'} onChange={(e) => onPick(e.target.value)} aria-label="Colore personalizzato" />
+          <input type="color" value={value && value.startsWith('#') && value.length === 7 ? value : '#000000'} onChange={(e) => onPick(e.target.value, true)} aria-label="Colore personalizzato" />
         </label>
       )}
     </div>
@@ -351,6 +452,13 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
     });
   };
 
+  const matchedFont = ts.fontFamily
+    ? (FONT_OPTIONS.find((o) => o.value && normFont(o.value) === normFont(ts.fontFamily))?.value ?? ts.fontFamily)
+    : '';
+  const hasCustomFont = Boolean(ts.fontFamily && !FONT_OPTIONS.some((o) => o.value && normFont(o.value) === normFont(ts.fontFamily)));
+  const hasCustomSize = Boolean(ts.fontSize && !PRESET_FONT_SIZES.includes(ts.fontSize));
+  const noPage = !hasPage && !editor;
+
   return (
     <div className="format-bar" data-testid="format-bar">
       {/* 2. Carattere */}
@@ -358,85 +466,137 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
         <RibbonRow>
           <select
             className="rb-select"
-            value={ts.fontFamily ?? ''}
-            onChange={(e) => (e.target.value ? c()?.setFontFamily(e.target.value).run() : c()?.unsetFontFamily().run())}
+            value={matchedFont}
+            onChange={(e) => {
+              const val = e.target.value;
+              runWithEditor(editor, (ed) => {
+                if (val) ed.chain().focus().setFontFamily(val).run();
+                else ed.chain().focus().unsetFontFamily().run();
+              });
+            }}
             aria-label="Carattere"
             title="Carattere"
-            disabled={!editor}
+            disabled={noPage}
           >
-            <option value="">Sistema</option>
-            <option value="'New York', 'Iowan Old Style', Georgia, serif">Serif</option>
-            <option value="'SF Mono', ui-monospace, Menlo, monospace">Monospazio</option>
-            <option value="'Avenir Next', Avenir, sans-serif">Avenir</option>
-            <option value="'Bradley Hand', 'Segoe Print', cursive">Corsivo</option>
+            {FONT_OPTIONS.map((opt) => (
+              <option key={opt.label} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+            {hasCustomFont && ts.fontFamily && (
+              <option value={ts.fontFamily}>{ts.fontFamily.split(',')[0].replace(/["']/g, '').trim()}</option>
+            )}
           </select>
           <select
             className="rb-select narrow"
             value={ts.fontSize ?? ''}
-            onChange={(e) => (e.target.value ? c()?.setFontSize(e.target.value).run() : c()?.unsetFontSize().run())}
+            onChange={(e) => {
+              const val = e.target.value;
+              runWithEditor(editor, (ed) => {
+                if (val) ed.chain().focus().setFontSize(val).run();
+                else ed.chain().focus().unsetFontSize().run();
+              });
+            }}
             aria-label="Dimensione carattere"
             title="Dimensione carattere"
-            disabled={!editor}
+            disabled={noPage}
           >
             <option value="">Auto</option>
-            {['11px', '13px', '15px', '17px', '20px', '24px', '30px', '36px'].map((s) => (
+            {PRESET_FONT_SIZES.map((s) => (
               <option key={s} value={s}>
                 {parseInt(s, 10)}
               </option>
             ))}
+            {hasCustomSize && ts.fontSize && (
+              <option value={ts.fontSize}>{parseInt(ts.fontSize, 10) || ts.fontSize}</option>
+            )}
           </select>
-          <Btn onClick={() => c()?.toggleSuperscript().run()} active={!!editor?.isActive('superscript')} title={`Apice (${formatCombo('mod+.')})`} disabled={!editor}>
+          <Btn
+            onClick={() =>
+              runWithEditor(editor, (ed) => {
+                const chain = ed.chain().focus();
+                if (ed.isActive('subscript')) chain.unsetSubscript();
+                chain.toggleSuperscript().run();
+              })
+            }
+            active={!!editor?.isActive('superscript')}
+            title={`Apice (${formatCombo('mod+.')})`}
+            disabled={noPage}
+          >
             <Superscript size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleSubscript().run()} active={!!editor?.isActive('subscript')} title={`Pedice (${formatCombo('mod+,')})`} disabled={!editor}>
+          <Btn
+            onClick={() =>
+              runWithEditor(editor, (ed) => {
+                const chain = ed.chain().focus();
+                if (ed.isActive('superscript')) chain.unsetSuperscript();
+                chain.toggleSubscript().run();
+              })
+            }
+            active={!!editor?.isActive('subscript')}
+            title={`Pedice (${formatCombo('mod+,')})`}
+            disabled={noPage}
+          >
             <Subscript size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.unsetAllMarks().clearNodes().run()} title="Cancella formattazione" disabled={!editor}>
+          <Btn
+            onClick={() =>
+              runWithEditor(editor, (ed) => {
+                ed.chain().focus().unsetAllMarks().clearNodes().resetParagraphFormat().run();
+              })
+            }
+            title="Cancella formattazione"
+            disabled={noPage}
+          >
             <ClearIcon size={ICON_SIZE} />
           </Btn>
         </RibbonRow>
         <RibbonRow>
-          <Btn onClick={() => c()?.toggleBold().run()} active={!!editor?.isActive('bold')} title={`Grassetto (${formatCombo('mod+b')})`} testid="fmt-bold" disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleBold().run())} active={!!editor?.isActive('bold')} title={`Grassetto (${formatCombo('mod+b')})`} testid="fmt-bold" disabled={noPage}>
             <Bold size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleItalic().run()} active={!!editor?.isActive('italic')} title={`Corsivo (${formatCombo('mod+i')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleItalic().run())} active={!!editor?.isActive('italic')} title={`Corsivo (${formatCombo('mod+i')})`} disabled={noPage}>
             <Italic size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleUnderline().run()} active={!!editor?.isActive('underline')} title={`Sottolineato (${formatCombo('mod+u')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleUnderline().run())} active={!!editor?.isActive('underline')} title={`Sottolineato (${formatCombo('mod+u')})`} disabled={noPage}>
             <Underline size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleStrike().run()} active={!!editor?.isActive('strike')} title={`Barrato (${formatCombo('mod+shift+x')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleStrike().run())} active={!!editor?.isActive('strike')} title={`Barrato (${formatCombo('mod+shift+x')})`} disabled={noPage}>
             <Strikethrough size={ICON_SIZE} />
           </Btn>
-          <Popover title="Colore testo" trigger={<span className="color-a" style={{ borderColor: ts.color && ts.color.toLowerCase() !== '#1d1d1f' ? ts.color : '#67b2ff' }}>A</span>}>
+          <Popover title="Colore testo" disabled={noPage} trigger={<span className="color-a" style={{ borderColor: ts.color && ts.color.toLowerCase() !== '#1d1d1f' ? ts.color : '#67b2ff' }}>A</span>}>
             {(close) => (
               <Swatches
                 colors={TEXT_COLORS}
                 value={ts.color}
                 allowNone="Colore predefinito"
-                onPick={(col) => {
-                  if (col) c()?.setColor(col).run();
-                  else c()?.unsetColor().run();
-                  close();
+                onPick={(col, isCustom) => {
+                  runWithEditor(editor, (ed) => {
+                    if (col) ed.chain().focus().setColor(col).run();
+                    else ed.chain().focus().unsetColor().run();
+                  });
+                  if (!isCustom) close();
                 }}
               />
             )}
           </Popover>
-          <Popover title="Evidenziazione" trigger={<Highlighter size={ICON_SIZE} />}>
+          <Popover title="Evidenziazione" disabled={noPage} trigger={<Highlighter size={ICON_SIZE} />}>
             {(close) => (
               <Swatches
                 colors={HIGHLIGHT_COLORS}
                 value={(editor ? (editor.getAttributes('highlight').color as string) : null) ?? null}
                 allowNone="Nessuna evidenziazione"
-                onPick={(col) => {
-                  if (col) c()?.setHighlight({ color: col }).run();
-                  else c()?.unsetHighlight().run();
-                  close();
+                onPick={(col, isCustom) => {
+                  runWithEditor(editor, (ed) => {
+                    if (col) ed.chain().focus().setHighlight({ color: col }).run();
+                    else ed.chain().focus().unsetHighlight().run();
+                  });
+                  if (!isCustom) close();
                 }}
               />
             )}
           </Popover>
-          <Btn onClick={() => c()?.toggleCode().run()} active={!!editor?.isActive('code')} title={`Codice in linea (${formatCombo('mod+e')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleCode().run())} active={!!editor?.isActive('code')} title={`Codice in linea (${formatCombo('mod+e')})`} disabled={noPage}>
             <Code size={ICON_SIZE} />
           </Btn>
         </RibbonRow>
@@ -452,12 +612,12 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
             value={level ? `h${level}` : 'p'}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === 'p') c()?.setParagraph().run();
-              else c()?.setHeading({ level: Number(v[1]) as 1 | 2 | 3 }).run();
+              const targetStyle: 'p' | 1 | 2 | 3 = v === 'p' ? 'p' : (Number(v[1]) as 1 | 2 | 3);
+              runWithEditor(editor, (ed) => applyBlockStyle(ed, targetStyle));
             }}
             aria-label="Stile paragrafo"
             title="Stile paragrafo"
-            disabled={!editor}
+            disabled={noPage}
           >
             <option value="p">Testo</option>
             <option value="h1">Titolo 1</option>
@@ -466,6 +626,7 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
           </select>
           <Popover
             title="Allineamento"
+            disabled={noPage}
             trigger={
               editor?.isActive({ textAlign: 'center' }) ? (
                 <AlignCenter size={ICON_SIZE} />
@@ -480,16 +641,16 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
           >
             {(close) => (
               <div className="ribbon-group">
-                <Btn onClick={() => (c()?.setTextAlign('left').run(), close())} active={!!editor?.isActive({ textAlign: 'left' })} title="Allinea a sinistra">
+                <Btn onClick={() => (runWithEditor(editor, (ed) => ed.chain().focus().setTextAlign('left').run()), close())} active={!!editor?.isActive({ textAlign: 'left' })} title="Allinea a sinistra">
                   <AlignLeft size={ICON_SIZE} />
                 </Btn>
-                <Btn onClick={() => (c()?.setTextAlign('center').run(), close())} active={!!editor?.isActive({ textAlign: 'center' })} title="Centra">
+                <Btn onClick={() => (runWithEditor(editor, (ed) => ed.chain().focus().setTextAlign('center').run()), close())} active={!!editor?.isActive({ textAlign: 'center' })} title="Centra">
                   <AlignCenter size={ICON_SIZE} />
                 </Btn>
-                <Btn onClick={() => (c()?.setTextAlign('right').run(), close())} active={!!editor?.isActive({ textAlign: 'right' })} title="Allinea a destra">
+                <Btn onClick={() => (runWithEditor(editor, (ed) => ed.chain().focus().setTextAlign('right').run()), close())} active={!!editor?.isActive({ textAlign: 'right' })} title="Allinea a destra">
                   <AlignRight size={ICON_SIZE} />
                 </Btn>
-                <Btn onClick={() => (c()?.setTextAlign('justify').run(), close())} active={!!editor?.isActive({ textAlign: 'justify' })} title="Giustifica">
+                <Btn onClick={() => (runWithEditor(editor, (ed) => ed.chain().focus().setTextAlign('justify').run()), close())} active={!!editor?.isActive({ textAlign: 'justify' })} title="Giustifica">
                   <AlignJustify size={ICON_SIZE} />
                 </Btn>
               </div>
@@ -497,6 +658,7 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
           </Popover>
           <Popover
             title="Formattazione paragrafo"
+            disabled={noPage}
             trigger={
               <>
                 <Pilcrow size={ICON_SIZE} />
@@ -508,25 +670,25 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
           </Popover>
         </RibbonRow>
         <RibbonRow>
-          <Btn onClick={() => c()?.toggleBulletList().run()} active={!!editor?.isActive('bulletList')} title={`Elenco puntato (${formatCombo('mod+shift+8')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleBulletList().run())} active={!!editor?.isActive('bulletList')} title={`Elenco puntato (${formatCombo('mod+shift+8')})`} disabled={noPage}>
             <List size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleOrderedList().run()} active={!!editor?.isActive('orderedList')} title={`Elenco numerato (${formatCombo('mod+shift+7')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleOrderedList().run())} active={!!editor?.isActive('orderedList')} title={`Elenco numerato (${formatCombo('mod+shift+7')})`} disabled={noPage}>
             <ListOrdered size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleTaskList().run()} active={!!editor?.isActive('taskList')} title={`Lista di controllo (${formatCombo('mod+shift+9')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleTaskList().run())} active={!!editor?.isActive('taskList')} title={`Lista di controllo (${formatCombo('mod+shift+9')})`} disabled={noPage}>
             <ListChecks size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.outdent().run()} title="Riduci rientro (⇧⇥)" disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().outdent().run())} title="Riduci rientro (⇧⇥)" disabled={noPage}>
             <IndentDecrease size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.indent().run()} title="Aumenta rientro (⇥)" disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().indent().run())} title="Aumenta rientro (⇥)" disabled={noPage}>
             <IndentIncrease size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.toggleBlockquote().run()} active={!!editor?.isActive('blockquote')} title={`Citazione (${formatCombo('mod+shift+b')} nel testo)`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleBlockquote().run())} active={!!editor?.isActive('blockquote')} title={`Citazione (${formatCombo('mod+shift+b')} nel testo)`} disabled={noPage}>
             <Quote size={ICON_SIZE} />
           </Btn>
-          <Btn onClick={() => c()?.setHorizontalRule().run()} title="Linea divisoria" disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().setHorizontalRule().run(), 'insert')} title="Linea divisoria" disabled={noPage}>
             <Minus size={ICON_SIZE} />
           </Btn>
         </RibbonRow>
@@ -543,6 +705,7 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
           </Btn>
           <Popover
             title="Tabella"
+            disabled={noPage}
             trigger={
               <>
                 <Table size={ICON_SIZE} />
@@ -572,6 +735,7 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
         <RibbonRow>
           <Popover
             title="Equazione"
+            disabled={noPage}
             trigger={
               <>
                 <Sigma size={ICON_SIZE} />
@@ -608,12 +772,13 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
               </div>
             )}
           </Popover>
-          <Btn onClick={() => editor && void promptLink(editor)} active={!!editor?.isActive('link')} title={`Collegamento (${formatCombo('mod+k')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => void promptLink(ed), 'insert')} active={!!editor?.isActive('link')} title={`Collegamento (${formatCombo('mod+k')})`} disabled={noPage}>
             <Link2 size={ICON_SIZE} />
             <span className="rb-compact-label">Link</span>
           </Btn>
           <Popover
             title="Link a pagina ([[…]])"
+            disabled={noPage}
             trigger={
               <>
                 <span className="wiki-bracket-icon" aria-hidden>[[</span>
@@ -631,10 +796,9 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
                     <button
                       key={p.id}
                       className="menu-item"
-                      disabled={!editor}
                       onClick={() => {
                         close();
-                        c()?.insertContent(`[[${p.title}]]`).run();
+                        runWithEditor(editor, (ed) => ed.chain().focus().insertContent(`[[${p.title}]]`).run(), 'insert');
                       }}
                     >
                       {p.title}
@@ -642,7 +806,6 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
                   ))}
                 <button
                   className="menu-item"
-                  disabled={!editor}
                   onClick={() => {
                     close();
                     void askText({
@@ -653,13 +816,12 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
                       keepEditing: true,
                       confirmLabel: 'Inserisci',
                     }).then((title) => {
-                      const active = useActiveEditor.getState().editor;
-                      if (!active || active.isDestroyed) return;
-                      if (title?.trim()) {
-                        active.chain().focus().insertContent(`[[${title.trim()}]]`).run();
-                      } else {
-                        active.commands.focus();
+                      if (!title?.trim()) {
+                        const active = useActiveEditor.getState().editor;
+                        if (active && !active.isDestroyed) active.commands.focus();
+                        return;
                       }
+                      runWithEditor(editor, (ed) => ed.chain().focus().insertContent(`[[${title.trim()}]]`).run(), 'insert');
                     });
                   }}
                 >
@@ -668,7 +830,7 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
               </div>
             )}
           </Popover>
-          <Btn onClick={() => c()?.toggleCodeBlock().run()} active={inCode} title={`Blocco di codice (${formatCombo('mod+alt+c')})`} disabled={!editor}>
+          <Btn onClick={() => runWithEditor(editor, (ed) => ed.chain().focus().toggleCodeBlock().run())} active={inCode} title={`Blocco di codice (${formatCombo('mod+alt+c')})`} disabled={noPage}>
             <SquareCode size={ICON_SIZE} />
             <span className="rb-compact-label">Codice</span>
           </Btn>
@@ -694,9 +856,9 @@ function FormatBar({ editor }: { editor?: Editor | null }) {
   );
 }
 
-// --------------------------------------------------------------------------- tool options (Word-style stacked)
+// --------------------------------------------------------------------------- width slider (shared with dock tool options)
 
-function WidthSlider({ value, min, max, step, onChange }: { value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
+export function WidthSlider({ value, min, max, step, onChange }: { value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
   return (
     <label className="width-slider" title="Spessore">
       <span className="width-dot" style={{ width: Math.min(16, Math.max(3, value)), height: Math.min(16, Math.max(3, value)) }} />
@@ -706,126 +868,13 @@ function WidthSlider({ value, min, max, step, onChange }: { value: number; min: 
   );
 }
 
-function ToolOptions({ tool }: { tool: Tool }) {
-  const s = useSettings();
-  if (tool === 'pen')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Penna">
-          <RibbonRow>
-            <span className="rb-label">Colore</span>
-            <Swatches colors={INK_COLORS} value={s.penColor} onPick={(c) => c && s.set({ penColor: c })} />
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-label">Spessore</span>
-            <WidthSlider value={s.penWidth} min={0.5} max={12} step={0.5} onChange={(v) => s.set({ penWidth: v })} />
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (tool === 'highlighter')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Evidenziatore">
-          <RibbonRow>
-            <span className="rb-label">Colore</span>
-            <Swatches colors={HL_INK} value={s.highlighterColor} onPick={(c) => c && s.set({ highlighterColor: c })} />
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-label">Spessore</span>
-            <WidthSlider value={s.highlighterWidth} min={6} max={40} step={1} onChange={(v) => s.set({ highlighterWidth: v })} />
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (['line', 'arrow', 'double-arrow', 'rect', 'ellipse'].includes(tool))
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Forme geometriche">
-          <RibbonRow>
-            <span className="rb-label">Bordo</span>
-            <Swatches colors={INK_COLORS} value={s.shapeColor} onPick={(c) => c && s.set({ shapeColor: c })} />
-            {(tool === 'rect' || tool === 'ellipse') && (
-              <>
-                <span className="rb-label" style={{ marginLeft: 6 }}>
-                  Riempimento
-                </span>
-                <Swatches colors={['#ffe066', '#a5d8ff', '#b2f2bb', '#ffc9de']} value={s.shapeFill} allowNone="Nessuno" onPick={(c) => s.set({ shapeFill: c })} allowCustom={false} />
-              </>
-            )}
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-label">Spessore</span>
-            <WidthSlider value={s.shapeWidth} min={1} max={12} step={0.5} onChange={(v) => s.set({ shapeWidth: v })} />
-            <span className="rb-hint">⇧ vincola proporzioni</span>
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (tool === 'connector')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Connettore">
-          <RibbonRow>
-            <span className="rb-label">Colore</span>
-            <Swatches colors={INK_COLORS} value={s.connectorColor} onPick={(c) => c && s.set({ connectorColor: c })} />
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-label">Spessore</span>
-            <WidthSlider value={s.connectorWidth} min={1} max={8} step={0.5} onChange={(v) => s.set({ connectorWidth: v })} />
-            <span className="rb-hint">Trascina tra oggetti per collegarli</span>
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (tool === 'eraser')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Gomma">
-          <RibbonRow>
-            <span className="rb-hint">Passa sui tratti e sulle forme per cancellarli</span>
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-hint">I tratti e le forme vengono rimossi al tocco</span>
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (tool === 'text' || tool === 'sticky')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Testo & Note">
-          <RibbonRow>
-            <span className="rb-hint">Clic su un punto qualsiasi della pagina per scrivere</span>
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-hint">Supporta blocchi auto-espandibili fino a 1850px</span>
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  if (tool === 'hand')
-    return (
-      <div className="format-bar">
-        <RibbonSection label="Panoramica">
-          <RibbonRow>
-            <span className="rb-hint">Trascina per spostare la vista · o usa 2 dita sul touchpad</span>
-          </RibbonRow>
-          <RibbonRow>
-            <span className="rb-hint">Anche Spazio + trascina con qualsiasi strumento attivo</span>
-          </RibbonRow>
-        </RibbonSection>
-      </div>
-    );
-  return null;
-}
-
 // --------------------------------------------------------------------------- selection actions (Word-style stacked)
 
 function SelectionActions({ items }: { items: CanvasItem[] }) {
   const allLocked = items.every((i) => i.locked);
-  const images = items.filter((i) => i.type === 'image');
+  const images = items.filter((i) => i.type === 'image' || isFreeImageContainer(i));
   const inked = items.filter((i) => i.type === 'stroke' || i.type === 'shape' || i.type === 'connector');
+  const allHighlighters = inked.length > 0 && inked.every((i) => i.type === 'stroke' && i.tool === 'highlighter');
   const connectors = items.filter((i): i is ConnectorItem => i.type === 'connector');
   const stickies = items.filter((i) => (i.type === 'text' || i.type === 'container') && i.variant === 'sticky');
   const boxes = items.filter((i) => i.type === 'shape' && (i.kind === 'rect' || i.kind === 'ellipse'));
@@ -889,12 +938,16 @@ function SelectionActions({ items }: { items: CanvasItem[] }) {
           )}
           {inked.length > 0 && (
             <>
-              <Swatches colors={INK_COLORS} value={first?.color} onPick={(c) => c && patchSelection((it) => ('color' in it ? { color: c } : null))} />
+              <Swatches
+                colors={allHighlighters ? HL_INK : INK_COLORS}
+                value={first?.color}
+                onPick={(c) => c && patchSelection((it) => ('color' in it ? { color: c } : null))}
+              />
               <WidthSlider
                 value={first?.width ?? 2}
-                min={0.5}
+                min={allHighlighters ? 6 : 0.5}
                 max={40}
-                step={0.5}
+                step={allHighlighters ? 1 : 0.5}
                 onChange={(v) => patchSelection((it) => (it.type === 'stroke' || it.type === 'shape' || it.type === 'connector' ? { width: v } : null))}
               />
             </>
@@ -1057,15 +1110,27 @@ function RibbonModificaSection({ editor }: { editor?: Editor | null }) {
   useActiveEditor((s) => s.tick);
   const canUndoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.past.length ?? 0) > 0);
   const canRedoStore = useStore((s) => !!s.pageId && (s.history[s.pageId]?.future.length ?? 0) > 0);
-  const canUndo = editor ? editor.can().undo() : canUndoStore;
-  const canRedo = editor ? editor.can().redo() : canRedoStore;
+  const canUndoEditor = Boolean(editor && !editor.isDestroyed && editor.can().undo());
+  const canRedoEditor = Boolean(editor && !editor.isDestroyed && editor.can().redo());
+  const canUndo = canUndoEditor || canUndoStore;
+  const canRedo = canRedoEditor || canRedoStore;
   const undo = () => {
-    if (editor) editor.chain().focus().undo().run();
-    else useStore.getState().undo();
+    if (editor && !editor.isDestroyed && editor.can().undo()) {
+      editor.chain().focus().undo().run();
+      return;
+    }
+    const editingId = useStore.getState().editingId;
+    if (editingId) finishEditing(editingId);
+    useStore.getState().undo();
   };
   const redo = () => {
-    if (editor) editor.chain().focus().redo().run();
-    else useStore.getState().redo();
+    if (editor && !editor.isDestroyed && editor.can().redo()) {
+      editor.chain().focus().redo().run();
+      return;
+    }
+    const editingId = useStore.getState().editingId;
+    if (editingId) finishEditing(editingId);
+    useStore.getState().redo();
   };
   return (
     <>
@@ -1089,10 +1154,14 @@ function RibbonModificaSection({ editor }: { editor?: Editor | null }) {
 function RibbonHomeSection() {
   const canGoBack = useUI((s) => s.navHistory.length > 0);
   const goHome = () => {
+    const st = useStore.getState();
+    if (st.editingId) finishEditing(st.editingId);
     useUI.getState().set({ homeOpen: true, homeTab: 'notebooks', homeNotebookId: null, homeSectionId: null });
   };
   const goBack = () => {
-    void useStore.getState().goBack();
+    const st = useStore.getState();
+    if (st.editingId) finishEditing(st.editingId);
+    void st.goBack();
   };
   return (
     <>
@@ -1172,10 +1241,6 @@ export function Ribbon() {
     content = <FormatBar editor={editor} />;
   } else if (tool === 'select' && selected.length && selected[0].type !== 'text' && (selected[0].type !== 'container' || isFreeImageContainer(selected[0]))) {
     content = <SelectionActions items={selected} />;
-  } else if (tool === 'text') {
-    content = <FormatBar editor={editor ?? null} />;
-  } else if (tool !== 'select') {
-    content = <ToolOptions tool={tool} />;
   } else {
     content = <FormatBar editor={editor ?? null} />;
   }

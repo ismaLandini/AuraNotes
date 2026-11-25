@@ -440,7 +440,7 @@ export const WikiLinkExtension = Extension.create({
   },
 });
 
-export const HIGHLIGHT_COLORS = ['#ffe066', '#b2f2bb', '#a5d8ff', '#ffc9de', '#ffd8a8', '#d0bfff'];
+export const HIGHLIGHT_COLORS = ['#ffe066', '#b2f2bb', '#a5d8ff', '#ff6b6b', '#ffd8a8', '#d0bfff'];
 
 export const CustomTableCell = TableCell.extend({
   addAttributes() {
